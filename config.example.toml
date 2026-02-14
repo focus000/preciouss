@@ -1,0 +1,62 @@
+[general]
+ledger_dir = "./ledger"
+main_file = "main.bean"
+default_currency = "CNY"
+
+[accounts.cmb_credit]
+type = "credit_card"
+importer = "cmb"
+beancount_account = "Liabilities:CreditCard:CMB"
+currency = "CNY"
+identifier = "1234"    # 卡号后四位，用于匹配支付宝中的支付方式描述
+
+[accounts.cmb_debit]
+type = "debit_card"
+importer = "cmb"
+beancount_account = "Assets:Bank:CMB"
+currency = "CNY"
+
+[accounts.alipay]
+type = "payment_platform"
+importer = "alipay"
+beancount_account = "Assets:Alipay"
+currency = "CNY"
+
+# [accounts.wechat]
+# type = "payment_platform"
+# importer = "wechat"
+# beancount_account = "Assets:WeChat"
+# currency = "CNY"
+
+# [accounts.ibkr]
+# type = "brokerage"
+# importer = "ibkr"
+# beancount_account = "Assets:Investment:IBKR"
+# flex_token = "${IBKR_FLEX_TOKEN}"
+# flex_query_id = "${IBKR_FLEX_QUERY_ID}"
+
+# [accounts.paypal]
+# type = "payment_platform"
+# importer = "paypal"
+# beancount_account = "Assets:PayPal"
+# client_id = "${PAYPAL_CLIENT_ID}"
+# client_secret = "${PAYPAL_CLIENT_SECRET}"
+
+[matching]
+date_tolerance_days = 3
+fuzzy_payee_threshold = 0.7
+
+[categorize.rules]
+"星巴克" = "Expenses:Food:Coffee"
+"瑞幸" = "Expenses:Food:Coffee"
+"滴滴出行" = "Expenses:Transport:Taxi"
+"滴滴" = "Expenses:Transport:Taxi"
+"美团外卖" = "Expenses:Food:Delivery"
+"饿了么" = "Expenses:Food:Delivery"
+"美团" = "Expenses:Food:Restaurant"
+"沃尔玛" = "Expenses:Food:Grocery"
+"盒马" = "Expenses:Food:Grocery"
+"京东" = "Expenses:Shopping:DailyGoods"
+"淘宝" = "Expenses:Shopping:DailyGoods"
+"拼多多" = "Expenses:Shopping:DailyGoods"
+"手续费" = "Expenses:Finance:Fees"

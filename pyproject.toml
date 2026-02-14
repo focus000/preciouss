@@ -1,0 +1,46 @@
+[project]
+name = "preciouss"
+version = "0.1.0"
+description = "Cross-platform personal finance accounting system based on Beancount v3"
+readme = "README.md"
+authors = [
+    { name = "focus000", email = "hanszimmerme@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "beancount>=3.0",
+    "fava>=1.28",
+    "beangulp>=0.1",
+    "smart-importer>=0.4",
+    "click>=8.0",
+    "pydantic>=2.0",
+    "chardet>=5.0",
+    "rapidfuzz>=3.0",
+    "pandas>=2.0",
+    "requests>=2.28",
+]
+
+[project.scripts]
+preciouss = "preciouss.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.2,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
