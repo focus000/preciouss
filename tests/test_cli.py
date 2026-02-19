@@ -54,3 +54,36 @@ def test_cli_status(tmp_path):
     # Init first
     result = runner.invoke(main, ["-c", "/nonexistent", "init", "--dir", str(ledger_dir)])
     assert result.exit_code == 0
+
+
+def test_cli_import_reinit(tmp_path, monkeypatch):
+    """--reinit deletes old ledger and reinitializes before importing."""
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+
+    # Init ledger
+    result = runner.invoke(main, ["init"])
+    assert result.exit_code == 0
+    ledger_dir = tmp_path / "ledger"
+    assert (ledger_dir / "main.bean").exists()
+
+    # Create a dummy file that should be deleted on reinit
+    dummy = ledger_dir / "importers" / "old_data.bean"
+    dummy.parent.mkdir(parents=True, exist_ok=True)
+    dummy.write_text("old data")
+    assert dummy.exists()
+
+    # Run import --reinit with the fixture
+    result = runner.invoke(
+        main,
+        ["import", "--reinit", str(FIXTURES / "alipay_sample.csv")],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "Deleted ledger directory" in result.output
+    assert "Reinitialized ledger" in result.output
+    # Old file should be gone
+    assert not dummy.exists()
+    # But ledger should be re-created
+    assert (ledger_dir / "main.bean").exists()
+    assert (ledger_dir / "accounts.bean").exists()
