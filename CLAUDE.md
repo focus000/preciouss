@@ -74,7 +74,11 @@ uv run preciouss fava           # 启动 Fava
 - `importers/base.py` - Importer 基类（PrecioussImporter, CsvImporter）和中间 Transaction 模型
 - `importers/alipay.py` - 支付宝 CSV 导入
 - `importers/cmb.py` - 招商银行信用卡/储蓄卡 CSV 导入
-- `importers/wechat.py` - 微信支付 CSV 导入
+- `importers/wechat.py` - 微信支付 CSV/XLSX 导入
+- `importers/wechathk.py` - 微信支付香港 JSON 导入
+- `importers/aldi.py` - ALDI 奥乐齐 JSON 导入（多 posting，商品明细写入 posting metadata）
+- `importers/jd.py` - 京东 CSV 导入（支持退款净额计算）
+- `importers/resolve.py` - 支付方式字符串 → Beancount 账户名解析
 - `matching/engine.py` - 三阶段匹配引擎（Reference ID → Intermediary → Fuzzy）
 - `categorize/rules.py` - 规则分类（关键词 + 正则）
 - `categorize/taxonomy.py` - 分类体系定义
@@ -107,6 +111,6 @@ uv run preciouss fava           # 启动 Fava
 
 ## 测试约定
 
-- fixtures 目录: `tests/fixtures/` 存放样本 CSV
+- fixtures 目录: `tests/fixtures/` 存放样本 CSV/JSON/XLSX
 - 每个 importer 至少一个测试用例
 - 测试文件命名: `test_<module>.py`

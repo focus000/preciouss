@@ -14,14 +14,16 @@
 |------|------|------|
 | 支付宝 | CSV 导入 | ✅ |
 | 招商银行 (信用卡/储蓄卡) | CSV 导入 | ✅ |
-| 微信支付 | CSV 导入 | 🔜 |
+| 微信支付 | CSV/XLSX 导入 | ✅ |
+| 微信支付香港 (WeChat Pay HK) | JSON 导入 | ✅ |
+| 京东 | CSV 导入 | ✅ |
+| ALDI 奥乐齐 | JSON 导入 | ✅ |
 | 工商银行 | CSV/PDF 导入 | 🔜 |
 | 建设银行 | CSV/PDF 导入 | 🔜 |
 | 中国银行 | CSV 导入 | 🔜 |
 | 汇丰香港 | CSV 导入 | 🔜 |
 | 中银香港 | CSV/PDF 导入 | 🔜 |
 | AlipayHK | CSV 导入 | 🔜 |
-| WeChatHK | CSV 导入 | 🔜 |
 | 云闪付 | CSV 导入 | 🔜 |
 | Interactive Brokers | Flex Query API | 🔜 |
 | PayPal | REST API | 🔜 |
