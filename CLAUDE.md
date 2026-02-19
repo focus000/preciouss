@@ -76,14 +76,15 @@ uv run preciouss fava           # 启动 Fava
 - `importers/alipay.py` - 支付宝 CSV 导入
 - `importers/cmb.py` - 招商银行信用卡/储蓄卡 CSV 导入
 - `importers/wechat.py` - 微信支付 CSV/XLSX 导入
-- `importers/wechathk.py` - 微信支付香港 JSON 导入
+- `importers/wechathk.py` - 微信支付香港 JSON 导入（跨币种 HKD→CNY 自动转换）
 - `importers/aldi.py` - ALDI 奥乐齐 JSON 导入（多 posting，商品明细写入 posting metadata）
+- `importers/costco.py` - Costco 开市客 JSON 导入（多 posting，商品明细 + 跨币种支付）
 - `importers/jd.py` - 京东 CSV 导入（支持退款净额计算）
 - `importers/resolve.py` - 支付方式字符串 → Beancount 账户名解析
 - `matching/engine.py` - 三阶段匹配引擎（Reference ID → Intermediary → Fuzzy）
 - `categorize/rules.py` - 规则分类（关键词 + 正则）
 - `categorize/taxonomy.py` - 分类体系定义
-- `ledger/writer.py` - Beancount .bean 文件写入
+- `ledger/writer.py` - Beancount .bean 文件写入（含跨币种 @ 价格注解）
 - `ledger/accounts.py` - 账户体系和默认账户
 - `cli.py` - Click CLI 入口
 

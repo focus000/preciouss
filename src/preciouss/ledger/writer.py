@@ -135,11 +135,15 @@ def multiposting_transaction_to_bean(
     tx: Transaction,
     category_amounts: list[tuple[str, Decimal, list[dict]]],
     gift_card_amount: Decimal = Decimal(0),
+    source_posting_override: Posting | None = None,
 ) -> BeanTransaction:
     """Generate a multi-posting beancount entry: source + optional gift card + N expense postings.
 
     category_amounts must already sum to abs(tx.amount) + gift_card_amount (via
     group_items_by_category with the correct total_payment).
+
+    source_posting_override: if provided, replaces the default source posting. Used for
+    cross-currency payments (e.g. Costco CNY receipt paid via WeChat HK in HKD).
     """
     meta = new_metadata("<preciouss>", 0)
     if tx.reference_id:
@@ -149,7 +153,10 @@ def multiposting_transaction_to_bean(
     if tx.metadata.get("aldi_channel"):
         meta["channel"] = tx.metadata["aldi_channel"]
 
-    postings = [_make_posting(tx.source_account, tx.amount, tx.currency)]
+    if source_posting_override is not None:
+        postings = [source_posting_override]
+    else:
+        postings = [_make_posting(tx.source_account, tx.amount, tx.currency)]
 
     if gift_card_amount > Decimal(0):
         postings.append(_make_posting("Assets:JD:GiftCard", -gift_card_amount, tx.currency))
@@ -198,6 +205,29 @@ def write_transactions(
             total_payment = -tx.amount
             by_category = group_items_by_category(tx.metadata["aldi_items"], total_payment)
             bean_tx = multiposting_transaction_to_bean(tx, by_category)
+        elif tx.metadata.get("costco_items"):
+            # Multi-posting path: group Costco items by category (proportional)
+            total_payment = -tx.amount
+            by_category = group_items_by_category(tx.metadata["costco_items"], total_payment)
+            # Cross-currency case: Costco is CNY-priced but paid via HK wallet (HKD)
+            # Build source posting as: Assets:WeChatHK -X HKD @ rate CNY
+            source_override = None
+            pay_amount_str = tx.metadata.get("costco_payment_amount")
+            pay_currency = tx.metadata.get("costco_payment_currency")
+            if pay_amount_str and pay_currency and pay_currency != tx.currency:
+                pay_num = Decimal(pay_amount_str)
+                rate = (total_payment / pay_num).quantize(Decimal("0.000001"))
+                source_override = Posting(
+                    tx.source_account,
+                    Amount(-pay_num, pay_currency),
+                    None,
+                    Amount(rate, tx.currency),
+                    None,
+                    None,
+                )
+            bean_tx = multiposting_transaction_to_bean(
+                tx, by_category, source_posting_override=source_override
+            )
         elif tx.metadata.get("jd_items"):
             # Multi-posting path: JD items with optional gift card
             gift_card_str = tx.metadata.get("jd_gift_card")
@@ -205,6 +235,44 @@ def write_transactions(
             total_payment = -tx.amount + gift_card
             by_category = group_items_by_category(tx.metadata["jd_items"], total_payment)
             bean_tx = multiposting_transaction_to_bean(tx, by_category, gift_card_amount=gift_card)
+        elif tx.metadata.get("wechathk_foreign_amount"):
+            # Standalone WechatHK cross-currency: HKD debit for CNY-priced transaction
+            foreign_amount = Decimal(tx.metadata["wechathk_foreign_amount"])
+            foreign_currency = tx.metadata["wechathk_foreign_currency"]
+            hkd_amount = abs(tx.amount)
+            rate = (foreign_amount / hkd_amount).quantize(Decimal("0.000001"))
+            source_posting = Posting(
+                tx.source_account,
+                Amount(tx.amount, tx.currency),
+                None,
+                Amount(rate, foreign_currency),
+                None,
+                None,
+            )
+            cat_account = categorizer.categorize(tx) if categorizer else None
+            counter = cat_account or counter_account or get_expense_account_for_type(tx.tx_type)
+            meta = new_metadata("<preciouss>", 0)
+            if tx.reference_id:
+                meta["ref"] = tx.reference_id
+            if tx.payment_method:
+                meta["payment_method"] = tx.payment_method
+            bean_tx = BeanTransaction(
+                meta=meta,
+                date=tx.date.date() if isinstance(tx.date, datetime.datetime) else tx.date,
+                flag="*",
+                payee=tx.payee or None,
+                narration=tx.narration or "",
+                tags=frozenset(),
+                links=frozenset(),
+                postings=[
+                    source_posting,
+                    _make_posting(
+                        counter,
+                        foreign_amount if tx.amount < 0 else -foreign_amount,
+                        foreign_currency,
+                    ),
+                ],
+            )
         elif tx.metadata.get("transfer_account"):
             # Transfer path: use transfer_account as counter
             bean_tx = transaction_to_bean(tx, tx.metadata["transfer_account"])

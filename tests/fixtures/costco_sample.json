@@ -1,0 +1,45 @@
+{
+    "code": "000000",
+    "data": {
+        "actualPayment": 141.8,
+        "barcode": "555710202360070001202601172024",
+        "cashDiscount": -7.0,
+        "itemList": [
+            {
+                "amount": 1.0,
+                "itemCode": "1512209",
+                "itemName": "袋装综合坚果",
+                "taxAmount": 13.33,
+                "taxRate": "13%",
+                "totalDiscount": 0.0,
+                "totalNetPrice": 102.57,
+                "totalPrice": 115.9,
+                "unitNetPrice": 102.57,
+                "unitPrice": 115.9,
+                "weightItem": ""
+            },
+            {
+                "amount": 1.0,
+                "itemCode": "9923450",
+                "itemName": "纸巾家庭装",
+                "taxAmount": 3.0,
+                "taxRate": "9%",
+                "totalDiscount": 0.0,
+                "totalNetPrice": 30.3,
+                "totalPrice": 33.9,
+                "unitNetPrice": 30.3,
+                "unitPrice": 33.9,
+                "weightItem": ""
+            }
+        ],
+        "memberCardNo": "60002441247",
+        "memberId": 2591255,
+        "membershipNo": "1001622621",
+        "siteCode": "5557",
+        "totalPrice": 148.8,
+        "transTime": "2026-01-17 20:23:33",
+        "warehouseName": "上海闵行"
+    },
+    "msg": "执行成功",
+    "success": true
+}

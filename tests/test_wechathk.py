@@ -1,5 +1,6 @@
 """Tests for WeChat Pay HK JSON importer."""
 
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -49,7 +50,8 @@ class TestExtract:
         assert tx.tx_type == "expense"
         assert tx.reference_id == "4200002700202505129525209429"
         assert tx.payment_method == "Mastercard(1863)"
-        assert tx.metadata["foreign_price"] == "￥25.00"
+        assert tx.metadata["wechathk_foreign_amount"] == "25.00"
+        assert tx.metadata["wechathk_foreign_currency"] == "CNY"
         assert tx.metadata["foreign_rate"] == "1CNY=1.08719HKD"
 
     def test_extract_native_hkd_payment(self):
@@ -61,8 +63,8 @@ class TestExtract:
         assert tx.amount == Decimal("-48.00")
         assert tx.currency == "HKD"
         assert tx.tx_type == "expense"
-        # Native HKD has no foreign_price/foreign_rate
-        assert "foreign_price" not in tx.metadata
+        # Native HKD has no foreign currency metadata
+        assert "wechathk_foreign_amount" not in tx.metadata
         assert "foreign_rate" not in tx.metadata
 
     def test_extract_refund(self):
@@ -102,3 +104,89 @@ class TestAccountName:
     def test_custom_account(self):
         importer = WechatHKImporter(account="Assets:WeChatHK", currency="HKD")
         assert importer.account_name() == "Assets:WeChatHK"
+
+
+class TestBeancountValidation:
+    def test_cross_currency_validates(self, tmp_path):
+        """Cross-currency WechatHK transaction passes beancount validation."""
+        from beancount.loader import load_string
+
+        from preciouss.importers.base import Transaction
+        from preciouss.ledger.writer import init_ledger, write_transactions
+
+        ledger_dir = tmp_path / "ledger"
+        init_ledger(ledger_dir)
+
+        tx = Transaction(
+            date=datetime(2026, 5, 12, 0, 0, 0),
+            amount=Decimal("-27.18"),
+            currency="HKD",
+            payee="Manner Coffee",
+            narration="点餐-深圳天安云谷店",
+            source_account="Assets:WeChatHK",
+            reference_id="4200002700202505129525209429",
+            payment_method="Mastercard(1863)",
+            tx_type="expense",
+            metadata={
+                "wechathk_foreign_amount": "25.00",
+                "wechathk_foreign_currency": "CNY",
+                "foreign_rate": "1CNY=1.08719HKD",
+            },
+        )
+
+        write_transactions([tx], ledger_dir / "importers" / "wechathk.bean")
+
+        parts = []
+        for name in ["main.bean", "commodities.bean", "accounts.bean"]:
+            parts.append((ledger_dir / name).read_text(encoding="utf-8"))
+        parts.append((ledger_dir / "importers" / "wechathk.bean").read_text(encoding="utf-8"))
+
+        combined = "\n".join(parts)
+        combined = "\n".join(
+            line for line in combined.splitlines() if not line.startswith("include ")
+        )
+
+        _, errors, _ = load_string(combined)
+        assert errors == [], f"Beancount validation errors: {errors}"
+
+    def test_cross_currency_refund_validates(self, tmp_path):
+        """Cross-currency refund (positive amount) passes beancount validation."""
+        from beancount.loader import load_string
+
+        from preciouss.importers.base import Transaction
+        from preciouss.ledger.writer import init_ledger, write_transactions
+
+        ledger_dir = tmp_path / "ledger"
+        init_ledger(ledger_dir)
+
+        tx = Transaction(
+            date=datetime(2024, 5, 19, 0, 0, 0),
+            amount=Decimal("84.74"),
+            currency="HKD",
+            payee="中铁网络",
+            narration="12306消费",
+            source_account="Assets:WeChatHK",
+            reference_id="1020023200020110202405195800188745330",
+            payment_method="Mastercard(1863)",
+            tx_type="income",
+            metadata={
+                "wechathk_foreign_amount": "78.00",
+                "wechathk_foreign_currency": "CNY",
+                "wechathk_refund": "true",
+            },
+        )
+
+        write_transactions([tx], ledger_dir / "importers" / "wechathk.bean")
+
+        parts = []
+        for name in ["main.bean", "commodities.bean", "accounts.bean"]:
+            parts.append((ledger_dir / name).read_text(encoding="utf-8"))
+        parts.append((ledger_dir / "importers" / "wechathk.bean").read_text(encoding="utf-8"))
+
+        combined = "\n".join(parts)
+        combined = "\n".join(
+            line for line in combined.splitlines() if not line.startswith("include ")
+        )
+
+        _, errors, _ = load_string(combined)
+        assert errors == [], f"Beancount validation errors: {errors}"

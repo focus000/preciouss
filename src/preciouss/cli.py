@@ -15,6 +15,7 @@ from preciouss.importers.aldi import AldiImporter
 from preciouss.importers.alipay import AlipayImporter
 from preciouss.importers.base import PrecioussImporter, Transaction
 from preciouss.importers.cmb import CmbCreditImporter, CmbDebitImporter
+from preciouss.importers.costco import CostcoImporter
 from preciouss.importers.jd import JdImporter, JdOrdersImporter
 from preciouss.importers.resolve import (
     PLATFORM_ACCOUNT_PREFIXES,
@@ -61,6 +62,10 @@ def _get_importers(config: Config) -> list[PrecioussImporter]:
                 importers.append(
                     AldiImporter(account=acct.beancount_account, currency=acct.currency)
                 )
+            case "costco":
+                importers.append(
+                    CostcoImporter(account=acct.beancount_account, currency=acct.currency)
+                )
             case "jd":
                 importers.append(
                     JdImporter(
@@ -81,6 +86,7 @@ def _get_importers(config: Config) -> list[PrecioussImporter]:
             CmbCreditImporter(),
             CmbDebitImporter(),
             AldiImporter(),
+            CostcoImporter(),
             JdImporter(),
             JdOrdersImporter(),
         ]
@@ -383,6 +389,74 @@ def _merge_aldi_with_payments(
                     matched = True
 
 
+def _merge_costco_with_payments(
+    all_txns_by_importer: dict[int, list[Transaction]],
+    importer_map: dict[int, PrecioussImporter],
+) -> None:
+    """Merge Costco orders with payment transactions via counterpart_ref exact match.
+
+    Each Costco tx has counterpart_ref = barcode[4:14] (10-digit merchant order).
+    Payment records (Alipay/WeChat) store this same number as counterpart_ref.
+    Matched payment tx is removed from its pool; Costco tx inherits source_account
+    and payment_method.
+    """
+    costco_ids = [imp_id for imp_id, imp in importer_map.items() if isinstance(imp, CostcoImporter)]
+    payment_ids = [imp_id for imp_id in importer_map if imp_id not in set(costco_ids)]
+
+    if not costco_ids or not payment_ids:
+        return
+
+    # Build lookup: counterpart_ref → (pay_txns_list, pay_tx)
+    ref_to_payment: dict[str, tuple[list[Transaction], Transaction]] = {}
+    for pay_id in payment_ids:
+        for pay_tx in all_txns_by_importer.get(pay_id, []):
+            if pay_tx.counterpart_ref:
+                ref_to_payment[pay_tx.counterpart_ref] = (
+                    all_txns_by_importer[pay_id],
+                    pay_tx,
+                )
+
+    for costco_id in costco_ids:
+        for costco_tx in all_txns_by_importer.get(costco_id, []):
+            merchant_order = costco_tx.counterpart_ref
+            if not merchant_order or merchant_order not in ref_to_payment:
+                continue
+            pay_txns, pay_tx = ref_to_payment.pop(merchant_order)
+            costco_tx.source_account = pay_tx.source_account
+            costco_tx.payment_method = pay_tx.payment_method
+            # Cross-currency: payment in HKD for CNY-priced receipt
+            if pay_tx.metadata.get("wechathk_foreign_amount"):
+                # WechatHK paid HKD for a CNY-priced Costco receipt
+                costco_tx.metadata["costco_payment_amount"] = str(abs(pay_tx.amount))
+                costco_tx.metadata["costco_payment_currency"] = pay_tx.currency
+            elif pay_tx.currency != costco_tx.currency:
+                # Generic cross-currency fallback for other payment methods
+                costco_tx.metadata["costco_payment_amount"] = str(abs(pay_tx.amount))
+                costco_tx.metadata["costco_payment_currency"] = pay_tx.currency
+            pay_txns.remove(pay_tx)
+
+
+def _validate_ledger(ledger_dir: Path, main_file: str) -> None:
+    """Validate the generated beancount ledger and report errors."""
+    from beancount.loader import load_file
+
+    main_bean = ledger_dir / main_file
+    if not main_bean.exists():
+        return
+
+    _, errors, _ = load_file(str(main_bean))
+    if not errors:
+        click.echo(click.style("\nBeancount validation: OK", fg="green"))
+        return
+
+    click.echo(click.style(f"\n{len(errors)} beancount validation error(s):", fg="red"), err=True)
+    for err in errors:
+        source = err.source
+        fname = Path(source.get("filename", "")).name if source else "?"
+        lineno = source.get("lineno", "?") if source else "?"
+        click.echo(click.style(f"  {fname}:{lineno}  {err.message}", fg="red"), err=True)
+
+
 def _parse_year_range(year_str: str) -> tuple[datetime, datetime]:
     """Parse 'START:END' year range string into a half-open [from, until) datetime interval.
 
@@ -540,6 +614,9 @@ def import_cmd(
     # Phase 2.5b: Merge ALDI orders with payment transactions
     _merge_aldi_with_payments(all_txns_by_importer, importer_map)
 
+    # Phase 2.5c: Merge Costco orders with payment transactions
+    _merge_costco_with_payments(all_txns_by_importer, importer_map)
+
     # Phase 3: Write per importer
     for imp_id, all_txns in all_txns_by_importer.items():
         importer = importer_map[imp_id]
@@ -572,6 +649,10 @@ def import_cmd(
         click.echo(click.style(f"\n{len(warnings)} warning(s):", fg="yellow"), err=True)
         for w in warnings:
             click.echo(click.style(f"  - {w}", fg="yellow"), err=True)
+
+    # Phase 4: Validate generated beancount ledger
+    if total_imported > 0:
+        _validate_ledger(ledger_dir, config.general.main_file)
 
 
 @main.command()

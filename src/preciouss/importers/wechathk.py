@@ -10,6 +10,17 @@ from pathlib import Path
 from preciouss.importers.base import PrecioussImporter, Transaction
 
 
+def _parse_foreign_price(foreign_price: str) -> tuple[Decimal, str] | None:
+    """Parse '￥25.00' → (Decimal('25.00'), 'CNY'). Returns None if unrecognized."""
+    s = foreign_price.strip()
+    if s.startswith("￥") or s.startswith("¥"):
+        try:
+            return Decimal(s[1:]), "CNY"
+        except Exception:
+            return None
+    return None
+
+
 class WechatHKImporter(PrecioussImporter):
     """Import transactions from WeChat Pay HK JSON exports.
 
@@ -113,8 +124,11 @@ class WechatHKImporter(PrecioussImporter):
         foreign_rate = record.get("foreign_rate", "").strip()
 
         metadata: dict = {}
-        if foreign_price:
-            metadata["foreign_price"] = foreign_price
+        parsed = _parse_foreign_price(foreign_price) if foreign_price else None
+        if parsed:
+            foreign_amount, foreign_currency = parsed
+            metadata["wechathk_foreign_amount"] = str(foreign_amount)
+            metadata["wechathk_foreign_currency"] = foreign_currency
         if foreign_rate:
             metadata["foreign_rate"] = foreign_rate
         if is_refund:

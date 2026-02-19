@@ -18,6 +18,7 @@
 | 微信支付香港 (WeChat Pay HK) | JSON 导入 | ✅ |
 | 京东 | CSV 导入 | ✅ |
 | ALDI 奥乐齐 | JSON 导入 | ✅ |
+| Costco 开市客 | JSON 导入 | ✅ |
 | 工商银行 | CSV/PDF 导入 | 🔜 |
 | 建设银行 | CSV/PDF 导入 | 🔜 |
 | 中国银行 | CSV 导入 | 🔜 |
