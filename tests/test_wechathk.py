@@ -95,6 +95,20 @@ class TestExtract:
         assert tx.amount == Decimal("-618.26")
         assert tx.counterpart_ref == "1016661903"
 
+    def test_costco_merchant_clearing(self):
+        """Costco payee should route to Costco clearing account."""
+        importer = WechatHKImporter()
+        txns = importer.extract(FIXTURES / "wechathk_sample.json")
+        tx = txns[3]  # Costco开市客
+        assert tx.counter_account == "Assets:Clearing:Costco"
+
+    def test_non_merchant_no_clearing(self):
+        """Non-merchant payee should have no counter_account."""
+        importer = WechatHKImporter()
+        txns = importer.extract(FIXTURES / "wechathk_sample.json")
+        tx = txns[0]  # Manner Coffee
+        assert tx.counter_account is None
+
 
 class TestAccountName:
     def test_default_account(self):

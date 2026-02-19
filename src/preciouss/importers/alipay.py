@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from preciouss.importers.base import CsvImporter, Transaction
+from preciouss.importers.clearing import detect_merchant_clearing, resolve_payment_to_clearing
 
 
 class AlipayImporter(CsvImporter):
@@ -96,8 +97,14 @@ class AlipayImporter(CsvImporter):
         if not payment_method:
             payment_method = row.get("交易来源地", "").strip()
 
-        # Resolve payment account
-        resolved_account = self._resolve_payment(payment_method)
+        # Resolve payment account via clearing
+        if payment_method and payment_method not in ("", "/"):
+            resolved_account = resolve_payment_to_clearing(payment_method, "Alipay")
+        else:
+            resolved_account = "Assets:Clearing:Alipay:Unknown"
+
+        # Detect known merchants → counter_account (clearing)
+        counter_account = detect_merchant_clearing("Alipay", payee, narration)
 
         return Transaction(
             date=date,
@@ -111,6 +118,7 @@ class AlipayImporter(CsvImporter):
             counterpart_ref=merchant_order if merchant_order else None,
             raw_category=row.get("类型", "").strip() or None,
             tx_type=tx_type,
+            counter_account=counter_account,
             metadata={
                 "alipay_status": status,
                 "source": row.get("交易来源地", "").strip(),

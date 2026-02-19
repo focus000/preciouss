@@ -6,7 +6,7 @@ import csv
 import io
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -32,7 +32,22 @@ class Transaction:
     counterpart_ref: str | None = None  # counterparty transaction ID
     raw_category: str | None = None  # platform's original category
     tx_type: str | None = None  # income/expense/transfer
+    counter_account: str | None = None  # explicit counter-account (skips categorizer)
     metadata: dict = field(default_factory=dict)
+
+
+def _amounts_match(a: Transaction, b: Transaction) -> bool:
+    """Check if amounts match, including cross-currency via foreign_amount metadata."""
+    # Same currency: direct comparison
+    if a.currency == b.currency and abs(a.amount) == abs(b.amount):
+        return True
+    # Cross-currency: check wechathk_foreign_amount on either side
+    for tx1, tx2 in [(a, b), (b, a)]:
+        fa = tx1.metadata.get("wechathk_foreign_amount")
+        fc = tx1.metadata.get("wechathk_foreign_currency")
+        if fa and fc and fc == tx2.currency and Decimal(fa) == abs(tx2.amount):
+            return True
+    return False
 
 
 class PrecioussImporter(ABC):
@@ -52,6 +67,25 @@ class PrecioussImporter(ABC):
     def account_name(self) -> str:
         """Return the beancount account name for this importer."""
         raise NotImplementedError
+
+    def match_clearing(
+        self, seed_tx: Transaction, candidates: list[Transaction]
+    ) -> Transaction | None:
+        """Default clearing matcher: cross-ref match, then amount+date fallback.
+
+        Override in subclasses for custom matching logic.
+        """
+        # Phase 1: reference_id / counterpart_ref cross-match
+        seed_refs = {r for r in [seed_tx.reference_id, seed_tx.counterpart_ref] if r}
+        for c in candidates:
+            cand_refs = {r for r in [c.reference_id, c.counterpart_ref] if r}
+            if seed_refs & cand_refs:
+                return c
+        # Phase 2: amount + date (±3 days), closest date first
+        for c in sorted(candidates, key=lambda c: abs((seed_tx.date - c.date).total_seconds())):
+            if abs(seed_tx.date - c.date) <= timedelta(days=3) and _amounts_match(seed_tx, c):
+                return c
+        return None
 
 
 class CsvImporter(PrecioussImporter):

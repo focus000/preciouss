@@ -60,7 +60,7 @@ def transaction_to_bean(tx: Transaction, counter_account: str | None = None) -> 
         meta["raw_category"] = tx.raw_category
 
     tags = frozenset()
-    links = frozenset()
+    links = frozenset({tx.metadata["link"]}) if tx.metadata.get("link") else frozenset()
 
     # Build postings
     postings = []
@@ -173,7 +173,7 @@ def multiposting_transaction_to_bean(
         payee=tx.payee or None,
         narration=tx.narration or "",
         tags=frozenset(),
-        links=frozenset(),
+        links=frozenset({tx.metadata["link"]}) if tx.metadata.get("link") else frozenset(),
         postings=postings,
     )
 
@@ -200,6 +200,9 @@ def write_transactions(
 
     bean_entries = []
     for tx in transactions:
+        # Build links from metadata
+        links = frozenset({tx.metadata["link"]}) if tx.metadata.get("link") else frozenset()
+
         if tx.metadata.get("aldi_items"):
             # Multi-posting path: group ALDI items by category (proportional)
             total_payment = -tx.amount
@@ -209,25 +212,7 @@ def write_transactions(
             # Multi-posting path: group Costco items by category (proportional)
             total_payment = -tx.amount
             by_category = group_items_by_category(tx.metadata["costco_items"], total_payment)
-            # Cross-currency case: Costco is CNY-priced but paid via HK wallet (HKD)
-            # Build source posting as: Assets:WeChatHK -X HKD @ rate CNY
-            source_override = None
-            pay_amount_str = tx.metadata.get("costco_payment_amount")
-            pay_currency = tx.metadata.get("costco_payment_currency")
-            if pay_amount_str and pay_currency and pay_currency != tx.currency:
-                pay_num = Decimal(pay_amount_str)
-                rate = (total_payment / pay_num).quantize(Decimal("0.000001"))
-                source_override = Posting(
-                    tx.source_account,
-                    Amount(-pay_num, pay_currency),
-                    None,
-                    Amount(rate, tx.currency),
-                    None,
-                    None,
-                )
-            bean_tx = multiposting_transaction_to_bean(
-                tx, by_category, source_posting_override=source_override
-            )
+            bean_tx = multiposting_transaction_to_bean(tx, by_category)
         elif tx.metadata.get("jd_items"):
             # Multi-posting path: JD items with optional gift card
             gift_card_str = tx.metadata.get("jd_gift_card")
@@ -235,8 +220,49 @@ def write_transactions(
             total_payment = -tx.amount + gift_card
             by_category = group_items_by_category(tx.metadata["jd_items"], total_payment)
             bean_tx = multiposting_transaction_to_bean(tx, by_category, gift_card_amount=gift_card)
+        elif tx.counter_account:
+            # Explicit counter_account path (clearing bridges, transfers)
+            if tx.metadata.get("wechathk_foreign_amount"):
+                # Cross-currency bridge: HKD source → CNY counter
+                foreign_amount = Decimal(tx.metadata["wechathk_foreign_amount"])
+                foreign_currency = tx.metadata["wechathk_foreign_currency"]
+                hkd_amount = abs(tx.amount)
+                rate = (foreign_amount / hkd_amount).quantize(Decimal("0.000001"))
+                source_posting = Posting(
+                    tx.source_account,
+                    Amount(tx.amount, tx.currency),
+                    None,
+                    Amount(rate, foreign_currency),
+                    None,
+                    None,
+                )
+                meta = new_metadata("<preciouss>", 0)
+                if tx.reference_id:
+                    meta["ref"] = tx.reference_id
+                if tx.payment_method:
+                    meta["payment_method"] = tx.payment_method
+                bean_tx = BeanTransaction(
+                    meta=meta,
+                    date=tx.date.date() if isinstance(tx.date, datetime.datetime) else tx.date,
+                    flag="*",
+                    payee=tx.payee or None,
+                    narration=tx.narration or "",
+                    tags=frozenset(),
+                    links=links,
+                    postings=[
+                        source_posting,
+                        _make_posting(
+                            tx.counter_account,
+                            foreign_amount if tx.amount < 0 else -foreign_amount,
+                            foreign_currency,
+                        ),
+                    ],
+                )
+            else:
+                # Simple bridge: source → counter_account
+                bean_tx = transaction_to_bean(tx, tx.counter_account)
         elif tx.metadata.get("wechathk_foreign_amount"):
-            # Standalone WechatHK cross-currency: HKD debit for CNY-priced transaction
+            # Standalone WechatHK cross-currency (no counter_account, e.g. HK local spend)
             foreign_amount = Decimal(tx.metadata["wechathk_foreign_amount"])
             foreign_currency = tx.metadata["wechathk_foreign_currency"]
             hkd_amount = abs(tx.amount)
@@ -263,7 +289,7 @@ def write_transactions(
                 payee=tx.payee or None,
                 narration=tx.narration or "",
                 tags=frozenset(),
-                links=frozenset(),
+                links=links,
                 postings=[
                     source_posting,
                     _make_posting(
@@ -273,9 +299,6 @@ def write_transactions(
                     ),
                 ],
             )
-        elif tx.metadata.get("transfer_account"):
-            # Transfer path: use transfer_account as counter
-            bean_tx = transaction_to_bean(tx, tx.metadata["transfer_account"])
         else:
             # Standard 2-posting path
             cat_account = None
@@ -344,6 +367,9 @@ include "importers/*.bean"
         for account, description in DEFAULT_ACCOUNTS.items():
             if account.startswith(("Expenses:", "Income:", "Equity:")):
                 # Expenses/Income/Equity accept any currency
+                currencies = ",".join(DEFAULT_CURRENCIES)
+            elif account.startswith("Assets:Clearing:"):
+                # Clearing accounts may bridge different currencies
                 currencies = ",".join(DEFAULT_CURRENCIES)
             elif "HK" in account:
                 currencies = "HKD"

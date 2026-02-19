@@ -72,29 +72,31 @@ uv run preciouss fava           # 启动 Fava
 ### 核心模块
 
 - `config/schema.py` - Pydantic 配置模型 + TOML 加载
-- `importers/base.py` - Importer 基类（PrecioussImporter, CsvImporter）和中间 Transaction 模型
+- `importers/base.py` - Importer 基类（PrecioussImporter, CsvImporter）、中间 Transaction 模型、`match_clearing()` 默认匹配器
+- `importers/clearing.py` - 清算账户路由：商户识别（Costco/ALDI/JD）、支付方式解析 → `Assets:Clearing:*`
 - `importers/alipay.py` - 支付宝 CSV 导入
 - `importers/cmb.py` - 招商银行信用卡/储蓄卡 CSV 导入
-- `importers/wechat.py` - 微信支付 CSV/XLSX 导入
+- `importers/wechat.py` - 微信支付 CSV/XLSX 导入（含 header 金额校验、部分退款状态解析）
 - `importers/wechathk.py` - 微信支付香港 JSON 导入（跨币种 HKD→CNY 自动转换）
 - `importers/aldi.py` - ALDI 奥乐齐 JSON 导入（多 posting，商品明细写入 posting metadata）
-- `importers/costco.py` - Costco 开市客 JSON 导入（多 posting，商品明细 + 跨币种支付）
-- `importers/jd.py` - 京东 CSV 导入（支持退款净额计算）
-- `importers/resolve.py` - 支付方式字符串 → Beancount 账户名解析
-- `matching/engine.py` - 三阶段匹配引擎（Reference ID → Intermediary → Fuzzy）
-- `categorize/rules.py` - 规则分类（关键词 + 正则）
-- `categorize/taxonomy.py` - 分类体系定义
-- `ledger/writer.py` - Beancount .bean 文件写入（含跨币种 @ 价格注解）
+- `importers/costco.py` - Costco 开市客 JSON 导入（多 posting，商品明细）
+- `importers/jd.py` - 京东 CSV 导入（纯桥接模式：JdImporter → 清算；JdOrdersImporter → 带明细的多 posting）
+- `importers/resolve.py` - 支付方式字符串 → Beancount 账户名解析（旧逻辑，CMB 仍使用）
+- `matching/clearing.py` - DFS 清算链匹配引擎：从终端支出向上追溯，分配 `^clr-NNNNNN` 链接标签
+- `categorize/rules.py` - 规则分类（关键词 + 正则，支持收支方向感知）
+- `ledger/writer.py` - Beancount .bean 文件写入（普通 / 多 posting / counter_account 桥接 / 跨币种 @ 价格注解 / links）
 - `ledger/accounts.py` - 账户体系和默认账户
 - `cli.py` - Click CLI 入口
 
 ### 关键设计决策
 
-1. **中间 Transaction 模型**: 所有 importer 先解析为统一的 `Transaction` dataclass，再由 ledger writer 转为 beancount 格式。这样匹配引擎和分类引擎可以在统一模型上工作。
+1. **中间 Transaction 模型**: 所有 importer 先解析为统一的 `Transaction` dataclass，再由 ledger writer 转为 beancount 格式。`counter_account` 字段指定显式对方账户，跳过分类器。
 
-2. **三阶段匹配**: Phase 1 用交易号精确匹配，Phase 2 识别"平台刷卡"模式（如支付宝→信用卡），Phase 3 用金额+日期+商户名模糊匹配。
+2. **清算账户架构（非合并）**: 跨平台交易不做运行时合并，而是各自独立导入并通过 `Assets:Clearing:*` 账户桥接。清算引擎（DFS）在 import 后自动分配 `^clr-NNNNNN` 链接标签关联相关交易。
 
-3. **beangulp 兼容但不强依赖**: 我们的 importer 基类是独立的 `PrecioussImporter`，但可以包装为 beangulp `Importer`。
+3. **JD 桥接模式**: `JdImporter` 只生成 `Assets:JD → Assets:Clearing:JD` 的桥接交易；`JdOrdersImporter` 独立生成 `Assets:Clearing:JD → Expenses:*` 的多 posting 明细交易，两者由 DFS 链接。
+
+4. **beangulp 兼容但不强依赖**: 我们的 importer 基类是独立的 `PrecioussImporter`，但可以包装为 beangulp `Importer`。
 
 ## 新增 Importer 开发指南
 

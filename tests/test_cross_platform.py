@@ -1,334 +1,124 @@
-"""Tests for cross-platform payment resolution."""
+"""Tests for clearing account routing (replacing cross-platform resolution)."""
 
 from __future__ import annotations
 
-from datetime import datetime
-from decimal import Decimal
-
-from preciouss.cli import _resolve_cross_platform
-from preciouss.importers.alipay import AlipayImporter
-from preciouss.importers.base import Transaction
-from preciouss.importers.jd import JdImporter
-from preciouss.importers.wechat import WechatImporter
-
-
-def _make_tx(
-    *,
-    amount: str = "-38.68",
-    date: str = "2025-01-15 10:00:00",
-    payee: str = "商户",
-    narration: str = "",
-    source_account: str = "Assets:Unknown",
-    payment_method: str | None = None,
-    reference_id: str | None = None,
-    currency: str = "CNY",
-) -> Transaction:
-    return Transaction(
-        date=datetime.strptime(date, "%Y-%m-%d %H:%M:%S"),
-        amount=Decimal(amount),
-        currency=currency,
-        payee=payee,
-        narration=narration,
-        source_account=source_account,
-        payment_method=payment_method,
-        reference_id=reference_id,
-    )
-
-
-class TestJdViaWechat:
-    """JD transaction paid via WeChat → should inherit WeChat's actual payment."""
-
-    def test_basic_resolution(self):
-        jd_imp = JdImporter()
-        wechat_imp = WechatImporter()
-
-        jd_tx = _make_tx(
-            amount="-38.68",
-            payee="京东商城",
-            narration="购物",
-            source_account="Assets:WeChat",
-            reference_id="JD001",
-        )
-        wechat_shadow = _make_tx(
-            amount="-38.68",
-            payee="京东",
-            narration="京东购物",
-            source_account="Liabilities:CreditCard:CMB",
-            payment_method="招商银行信用卡(0913)",
-            reference_id="WX001",
-        )
-
-        jd_id, wechat_id = id(jd_imp), id(wechat_imp)
-        all_txns = {jd_id: [jd_tx], wechat_id: [wechat_shadow]}
-        imp_map = {jd_id: jd_imp, wechat_id: wechat_imp}
-
-        _resolve_cross_platform(all_txns, imp_map)
-
-        assert jd_tx.source_account == "Liabilities:CreditCard:CMB"
-        assert jd_tx.payment_method == "招商银行信用卡(0913)"
-
-
-class TestShadowTxRemoved:
-    """Matched shadow transaction should be removed from the target pool."""
-
-    def test_shadow_removed_after_match(self):
-        jd_imp = JdImporter()
-        wechat_imp = WechatImporter()
-
-        jd_tx = _make_tx(
-            amount="-50.00",
-            payee="京东",
-            source_account="Assets:WeChat",
-        )
-        wechat_shadow = _make_tx(
-            amount="-50.00",
-            payee="京东购物",
-            source_account="Liabilities:CreditCard:CMB",
-        )
-        wechat_other = _make_tx(
-            amount="-100.00",
-            payee="美团",
-            source_account="Liabilities:CreditCard:CMB",
-        )
-
-        jd_id, wechat_id = id(jd_imp), id(wechat_imp)
-        all_txns = {jd_id: [jd_tx], wechat_id: [wechat_shadow, wechat_other]}
-        imp_map = {jd_id: jd_imp, wechat_id: wechat_imp}
-
-        _resolve_cross_platform(all_txns, imp_map)
-
-        # Shadow tx should be removed, other tx should remain
-        assert len(all_txns[wechat_id]) == 1
-        assert all_txns[wechat_id][0].payee == "美团"
-
-
-class TestNoMatchingFallback:
-    """When no matching shadow tx is found, fallback to Unknown."""
+from preciouss.importers.clearing import (
+    detect_merchant_clearing,
+    is_clearing_account,
+    resolve_payment_to_clearing,
+)
 
-    def test_no_match_becomes_unknown(self):
-        jd_imp = JdImporter()
-        wechat_imp = WechatImporter()
 
-        jd_tx = _make_tx(
-            amount="-38.68",
-            payee="京东",
-            source_account="Assets:WeChat",
-        )
-        # WeChat pool has no matching transaction
-        wechat_unrelated = _make_tx(
-            amount="-999.00",
-            payee="美团",
-            source_account="Liabilities:CreditCard:CMB",
-        )
+class TestResolvePaymentToClearing:
+    """resolve_payment_to_clearing: payment method → clearing account."""
 
-        jd_id, wechat_id = id(jd_imp), id(wechat_imp)
-        all_txns = {jd_id: [jd_tx], wechat_id: [wechat_unrelated]}
-        imp_map = {jd_id: jd_imp, wechat_id: wechat_imp}
+    def test_internal_wallet_wechat(self):
+        assert resolve_payment_to_clearing("零钱", "WX") == "Assets:WeChat"
 
-        _resolve_cross_platform(all_txns, imp_map)
+    def test_internal_wallet_wechat_lingqiantong(self):
+        assert resolve_payment_to_clearing("零钱通", "WX") == "Assets:WeChat"
 
-        assert jd_tx.source_account == "Assets:WeChat:Unknown"
+    def test_internal_wallet_alipay(self):
+        assert resolve_payment_to_clearing("余额", "Alipay") == "Assets:Alipay"
 
+    def test_internal_wallet_alipay_yuebao(self):
+        assert resolve_payment_to_clearing("余额宝", "Alipay") == "Assets:Alipay"
 
-class TestPlatformImporterNotPresent:
-    """When the target platform importer doesn't exist, fallback to Unknown."""
+    def test_internal_wallet_jd_baitiao(self):
+        assert resolve_payment_to_clearing("京东白条", "JD") == "Liabilities:JD:BaiTiao"
 
-    def test_missing_wechat_importer(self):
-        jd_imp = JdImporter()
+    def test_internal_wallet_jd_xiaojinku(self):
+        assert resolve_payment_to_clearing("京东小金库", "JD") == "Assets:JD:XiaoJinKu"
 
-        jd_tx = _make_tx(
-            amount="-38.68",
-            payee="京东",
-            source_account="Assets:WeChat",
-        )
+    def test_credit_card_wechat(self):
+        result = resolve_payment_to_clearing("招商银行信用卡(0913)", "WX")
+        assert result == "Assets:Clearing:WX:CC:CMB"
 
-        jd_id = id(jd_imp)
-        all_txns = {jd_id: [jd_tx]}
-        imp_map = {jd_id: jd_imp}
-
-        _resolve_cross_platform(all_txns, imp_map)
-
-        assert jd_tx.source_account == "Assets:WeChat:Unknown"
-
-
-class TestTerminalAccountNotResolved:
-    """Transactions with terminal bank accounts should not be touched."""
-
-    def test_bank_account_unchanged(self):
-        jd_imp = JdImporter()
-        wechat_imp = WechatImporter()
+    def test_debit_card_wechat(self):
+        result = resolve_payment_to_clearing("招商银行储蓄卡(5678)", "WX")
+        assert result == "Assets:Clearing:WX:Bank:CMB"
 
-        jd_tx = _make_tx(
-            amount="-38.68",
-            payee="京东",
-            source_account="Liabilities:CreditCard:CMB",
-        )
+    def test_credit_card_alipay(self):
+        result = resolve_payment_to_clearing("招商银行信用卡(尾号1234)", "Alipay")
+        assert result == "Assets:Clearing:Alipay:CC:CMB"
 
-        jd_id, wechat_id = id(jd_imp), id(wechat_imp)
-        all_txns = {jd_id: [jd_tx], wechat_id: []}
-        imp_map = {jd_id: jd_imp, wechat_id: wechat_imp}
+    def test_credit_card_jd(self):
+        result = resolve_payment_to_clearing("招商银行信用卡", "JD")
+        assert result == "Assets:Clearing:JD:CC:CMB"
 
-        _resolve_cross_platform(all_txns, imp_map)
+    def test_debit_card_jd(self):
+        result = resolve_payment_to_clearing("招商银行储蓄卡", "JD")
+        assert result == "Assets:Clearing:JD:Bank:CMB"
 
-        assert jd_tx.source_account == "Liabilities:CreditCard:CMB"
-
-
-class TestRequiresPlatformKeyword:
-    """Shadow tx must contain keywords identifying the source platform."""
-
-    def test_no_keyword_no_match(self):
-        jd_imp = JdImporter()
-        wechat_imp = WechatImporter()
-
-        jd_tx = _make_tx(
-            amount="-38.68",
-            payee="京东",
-            source_account="Assets:WeChat",
-        )
-        # Same amount, same date, but no JD keyword in payee/narration
-        wechat_shadow = _make_tx(
-            amount="-38.68",
-            payee="美团外卖",
-            narration="午餐",
-            source_account="Liabilities:CreditCard:CMB",
-        )
-
-        jd_id, wechat_id = id(jd_imp), id(wechat_imp)
-        all_txns = {jd_id: [jd_tx], wechat_id: [wechat_shadow]}
-        imp_map = {jd_id: jd_imp, wechat_id: wechat_imp}
-
-        _resolve_cross_platform(all_txns, imp_map)
-
-        # Not matched because shadow doesn't mention "京东"
-        assert jd_tx.source_account == "Assets:WeChat:Unknown"
-
-
-class TestDateTolerance:
-    """Date must be within 1 day for matching."""
-
-    def test_date_within_one_day(self):
-        jd_imp = JdImporter()
-        wechat_imp = WechatImporter()
-
-        jd_tx = _make_tx(
-            amount="-38.68",
-            date="2025-01-15 10:00:00",
-            payee="京东",
-            source_account="Assets:WeChat",
-        )
-        wechat_shadow = _make_tx(
-            amount="-38.68",
-            date="2025-01-16 08:00:00",
-            payee="京东购物",
-            source_account="Liabilities:CreditCard:CMB",
-        )
-
-        jd_id, wechat_id = id(jd_imp), id(wechat_imp)
-        all_txns = {jd_id: [jd_tx], wechat_id: [wechat_shadow]}
-        imp_map = {jd_id: jd_imp, wechat_id: wechat_imp}
-
-        _resolve_cross_platform(all_txns, imp_map)
-
-        assert jd_tx.source_account == "Liabilities:CreditCard:CMB"
-
-    def test_date_beyond_one_day(self):
-        jd_imp = JdImporter()
-        wechat_imp = WechatImporter()
-
-        jd_tx = _make_tx(
-            amount="-38.68",
-            date="2025-01-15 10:00:00",
-            payee="京东",
-            source_account="Assets:WeChat",
-        )
-        wechat_shadow = _make_tx(
-            amount="-38.68",
-            date="2025-01-17 10:00:00",
-            payee="京东购物",
-            source_account="Liabilities:CreditCard:CMB",
-        )
-
-        jd_id, wechat_id = id(jd_imp), id(wechat_imp)
-        all_txns = {jd_id: [jd_tx], wechat_id: [wechat_shadow]}
-        imp_map = {jd_id: jd_imp, wechat_id: wechat_imp}
-
-        _resolve_cross_platform(all_txns, imp_map)
-
-        # Date diff = 2 days, should not match
-        assert jd_tx.source_account == "Assets:WeChat:Unknown"
-
-
-class TestRecursiveChain:
-    """JD → WeChat → Alipay → bank card should resolve recursively."""
-
-    def test_three_level_chain(self):
-        jd_imp = JdImporter()
-        wechat_imp = WechatImporter()
-        alipay_imp = AlipayImporter()
-
-        jd_tx = _make_tx(
-            amount="-100.00",
-            payee="京东商城",
-            source_account="Assets:WeChat",
-        )
-        # WeChat shadow: paid via Alipay, mentions JD
-        wechat_shadow = _make_tx(
-            amount="-100.00",
-            payee="京东",
-            narration="京东购物",
-            source_account="Assets:Alipay",
-            payment_method="支付宝",
-        )
-        # Alipay shadow: paid via bank card, mentions WeChat/财付通
-        alipay_shadow = _make_tx(
-            amount="-100.00",
-            payee="财付通",
-            narration="微信转账",
-            source_account="Liabilities:CreditCard:CMB",
-            payment_method="招商银行信用卡",
-        )
-
-        jd_id, wechat_id, alipay_id = id(jd_imp), id(wechat_imp), id(alipay_imp)
-        all_txns = {
-            jd_id: [jd_tx],
-            wechat_id: [wechat_shadow],
-            alipay_id: [alipay_shadow],
-        }
-        imp_map = {jd_id: jd_imp, wechat_id: wechat_imp, alipay_id: alipay_imp}
-
-        _resolve_cross_platform(all_txns, imp_map)
-
-        assert jd_tx.source_account == "Liabilities:CreditCard:CMB"
-
-
-class TestCycleDetection:
-    """A → B → A cycle should not loop forever."""
-
-    def test_cycle_falls_back_to_unknown(self):
-        jd_imp = JdImporter()
-        wechat_imp = WechatImporter()
-
-        jd_tx = _make_tx(
-            amount="-50.00",
-            payee="京东",
-            source_account="Assets:WeChat",
-        )
-        # WeChat shadow points back to JD (cycle)
-        wechat_shadow = _make_tx(
-            amount="-50.00",
-            payee="京东",
-            source_account="Assets:JD",
-            payment_method="京东支付",
-        )
-
-        jd_id, wechat_id = id(jd_imp), id(wechat_imp)
-        all_txns = {jd_id: [jd_tx], wechat_id: [wechat_shadow]}
-        imp_map = {jd_id: jd_imp, wechat_id: wechat_imp}
-
-        # Should not raise, should handle gracefully with fallback
-        warnings = _resolve_cross_platform(all_txns, imp_map)
-
-        # After resolving, the tx inherits Assets:JD from wechat shadow,
-        # but Assets:JD is the own platform → cycle detected.
-        # The result should be Unknown fallback.
-        assert jd_tx.source_account == "Assets:JD:Unknown" or "Cycle" in str(warnings)
+    def test_icbc_credit(self):
+        result = resolve_payment_to_clearing("工商银行信用卡(1234)", "WX")
+        assert result == "Assets:Clearing:WX:CC:ICBC"
+
+    def test_platform_wechat_from_jd(self):
+        """JD sees '微信支付' → route to JD:WX clearing."""
+        result = resolve_payment_to_clearing("微信支付", "JD")
+        assert result == "Assets:Clearing:JD:WX"
+
+    def test_platform_alipay_from_jd(self):
+        result = resolve_payment_to_clearing("支付宝", "JD")
+        assert result == "Assets:Clearing:JD:Alipay"
+
+    def test_composite_wechat_bank(self):
+        """'微信-招商银行信用卡' → extract 微信 → JD:WX clearing."""
+        result = resolve_payment_to_clearing("微信-招商银行信用卡", "JD")
+        assert result == "Assets:Clearing:JD:WX"
+
+    def test_unknown_fallback(self):
+        result = resolve_payment_to_clearing("某某未知方式", "WX")
+        assert result == "Assets:Clearing:WX:Unknown"
+
+    def test_empty_payment(self):
+        result = resolve_payment_to_clearing("", "WX")
+        assert result == "Assets:Clearing:WX:Unknown"
+
+    def test_slash_payment(self):
+        result = resolve_payment_to_clearing("/", "JD")
+        assert result == "Assets:Clearing:JD:Unknown"
+
+
+class TestDetectMerchantClearing:
+    """detect_merchant_clearing: payee/narration → clearing account."""
+
+    def test_costco_in_payee(self):
+        result = detect_merchant_clearing("WX", "Costco", "开心购物")
+        assert result == "Assets:Clearing:Costco"
+
+    def test_costco_keyword_kaishike(self):
+        result = detect_merchant_clearing("WX", "开市客", "购物")
+        assert result == "Assets:Clearing:Costco"
+
+    def test_aldi_in_payee(self):
+        result = detect_merchant_clearing("WX", "ALDI奥乐齐", "线下门店")
+        assert result == "Assets:Clearing:ALDI"
+
+    def test_jd_in_payee(self):
+        """JD has sub-clearing, so includes platform suffix."""
+        result = detect_merchant_clearing("WX", "京东", "京东购物")
+        assert result == "Assets:Clearing:JD:WX"
+
+    def test_jd_from_alipay(self):
+        result = detect_merchant_clearing("Alipay", "京东", "购物")
+        assert result == "Assets:Clearing:JD:Alipay"
+
+    def test_no_match_returns_none(self):
+        result = detect_merchant_clearing("WX", "星巴克", "拿铁咖啡")
+        assert result is None
+
+    def test_costco_case_insensitive(self):
+        result = detect_merchant_clearing("WX", "costco", "购物")
+        assert result == "Assets:Clearing:Costco"
+
+
+class TestIsClearingAccount:
+    def test_clearing(self):
+        assert is_clearing_account("Assets:Clearing:Costco")
+        assert is_clearing_account("Assets:Clearing:WX:CC:CMB")
+
+    def test_not_clearing(self):
+        assert not is_clearing_account("Assets:WeChat")
+        assert not is_clearing_account("Liabilities:CreditCard:CMB")

@@ -10,8 +10,6 @@ from preciouss.importers.jd import (
     JdImporter,
     JdItemCategorizer,
     JdOrdersImporter,
-    _enrich_with_orders,
-    _load_jd_orders,
     _parse_amount,
 )
 from preciouss.ledger.writer import (
@@ -76,26 +74,23 @@ class TestExtract:
         """
         importer = JdImporter()
         txns = importer.extract(FIXTURES / "jd_sample.csv")
-        # Row 1: expense (normal) → kept
-        # Row 2: BaiTiao repayment (transfer) → kept
-        # Row 3: full refund → skipped
-        # Row 4: partial refund → kept
-        # Row 5: income → kept
-        # Row 6: XiaoJinKu deposit → kept
-        # Row 7: XiaoJinKu withdrawal → kept
-        assert len(txns) == 6  # 新增两条小金库转账
+        assert len(txns) == 6
 
-    def test_expense_resolved_account(self):
+    def test_expense_uses_clearing(self):
+        """Expense transactions now route through clearing accounts."""
         importer = JdImporter()
         txns = importer.extract(FIXTURES / "jd_sample.csv")
         tx0 = txns[0]
         assert tx0.payee == "京东平台商户"
         assert tx0.narration == "小米空气净化器滤芯"
         assert tx0.amount == Decimal("-38.68")
-        assert tx0.source_account == "Liabilities:CreditCard:CMB"
         assert tx0.tx_type == "expense"
         assert tx0.raw_category == "数码电器"
         assert tx0.reference_id == "JD202401100001"
+        # Source account is now a clearing account instead of direct bank
+        assert tx0.source_account == "Assets:Clearing:JD:CC:CMB"
+        # Counter account bridges to JD clearing
+        assert tx0.counter_account == "Assets:Clearing:JD"
 
     def test_baitiao_repayment_transfer(self):
         importer = JdImporter()
@@ -104,14 +99,13 @@ class TestExtract:
         assert tx1.narration == "白条还款-1月"
         assert tx1.amount == Decimal("-500.00")
         assert tx1.tx_type == "transfer"
-        assert tx1.source_account == "Assets:Bank:CMB"
-        assert tx1.metadata["transfer_account"] == "Liabilities:JD:BaiTiao"
+        # Transfer uses counter_account instead of metadata
+        assert tx1.counter_account == "Liabilities:JD:BaiTiao"
 
     def test_full_refund_skipped(self):
         """Full refund (44.28 已全额退款) should be skipped."""
         importer = JdImporter()
         txns = importer.extract(FIXTURES / "jd_sample.csv")
-        # None of the transactions should have amount -44.28 or reference JD202401180001
         refs = [tx.reference_id for tx in txns]
         assert "JD202401180001" not in refs
 
@@ -123,6 +117,7 @@ class TestExtract:
         assert tx2.amount == Decimal("-189.00")
         assert tx2.metadata["jd_refund"] == "203.98"
         assert tx2.metadata["jd_original"] == "392.98"
+        # BaiTiao payment goes through clearing
         assert tx2.source_account == "Liabilities:JD:BaiTiao"
         assert tx2.raw_category == "鞋服箱包"
 
@@ -132,7 +127,6 @@ class TestExtract:
         tx3 = txns[3]
         assert tx3.amount == Decimal("50.00")
         assert tx3.tx_type == "income"
-        assert tx3.source_account == "Assets:JD"
 
 
 class TestXiaoJinKuTransfers:
@@ -140,13 +134,12 @@ class TestXiaoJinKuTransfers:
         return JdImporter().extract(FIXTURES / "jd_sample.csv")
 
     def test_deposit_to_xiaojinku(self):
-        """小金库转入：银行 → Assets:JD:XiaoJinKu"""
+        """小金库转入：使用 counter_account"""
         txns = self._get_txns()
-        tx = txns[4]  # Row 6 (0-indexed 4)
+        tx = txns[4]
         assert tx.narration == "京东小金库-转入"
         assert tx.amount == Decimal("-200.00")
-        assert tx.source_account == "Assets:Bank:CMB"
-        assert tx.metadata["transfer_account"] == "Assets:JD:XiaoJinKu"
+        assert tx.counter_account == "Assets:JD:XiaoJinKu"
 
     def test_deposit_tx_type(self):
         txns = self._get_txns()
@@ -155,24 +148,15 @@ class TestXiaoJinKuTransfers:
     def test_withdraw_from_xiaojinku(self):
         """小金库取出：Assets:JD:XiaoJinKu → Assets:Unknown"""
         txns = self._get_txns()
-        tx = txns[5]  # Row 7 (0-indexed 5)
+        tx = txns[5]
         assert tx.narration == "京东小金库-取出"
         assert tx.amount == Decimal("-100.00")
         assert tx.source_account == "Assets:JD:XiaoJinKu"
-        assert tx.metadata["transfer_account"] == "Assets:Unknown"
+        assert tx.counter_account == "Assets:Unknown"
 
     def test_withdraw_tx_type(self):
         txns = self._get_txns()
         assert txns[5].tx_type == "transfer"
-
-    def test_xiaojinku_not_enriched(self):
-        """小金库 tx 有 orders_file 时也不应被 order enrichment 处理"""
-        importer = JdImporter(orders_file=FIXTURES / "jd_orders_sample.json")
-        txns = importer.extract(FIXTURES / "jd_sample.csv")
-        deposit_tx = txns[4]
-        withdraw_tx = txns[5]
-        assert "jd_items" not in deposit_tx.metadata
-        assert "jd_items" not in withdraw_tx.metadata
 
 
 class TestAccountName:
@@ -209,155 +193,6 @@ class TestBeancountValidation:
         assert errors == [], f"Beancount validation errors: {errors}"
 
 
-# --- Order Enrichment ---
-
-
-class TestOrderEnrichment:
-    def _make_tx(self, counterpart_ref: str, amount: Decimal = Decimal("-38.68")) -> Transaction:
-        from datetime import datetime
-
-        return Transaction(
-            date=datetime(2024, 1, 10, 9, 30),
-            amount=amount,
-            currency="CNY",
-            payee="京东平台商户",
-            narration="test",
-            source_account="Liabilities:CreditCard:CMB",
-            reference_id="JD202401100001",
-            counterpart_ref=counterpart_ref,
-            tx_type="expense",
-        )
-
-    def test_load_jd_orders_builds_lookup(self):
-        lookup = _load_jd_orders(FIXTURES / "jd_orders_sample.json")
-        assert "M20240110001" in lookup
-        assert "M20240120001" in lookup
-        # Cancelled order is excluded
-        assert "CANCELLED001" not in lookup
-        # parent_order_id grouping: CHILD001 and CHILD002 both map to PARENT001
-        assert "PARENT001" in lookup
-        assert len(lookup["PARENT001"]) == 2
-
-    def test_enrich_adds_jd_items(self):
-        lookup = _load_jd_orders(FIXTURES / "jd_orders_sample.json")
-        tx = self._make_tx("M20240110001")
-        _enrich_with_orders(tx, lookup)
-        assert "jd_items" in tx.metadata
-        items = tx.metadata["jd_items"]
-        assert len(items) == 1
-        assert items[0]["name"] == "小米空气净化器滤芯"
-        assert items[0]["num"] == 1
-        assert items[0]["price"] == "38.68"
-
-    def test_enrich_with_refund_tx(self):
-        """jd_refund transactions should also be enriched (not skipped)."""
-        from datetime import datetime
-
-        lookup = _load_jd_orders(FIXTURES / "jd_orders_sample.json")
-        tx = Transaction(
-            date=datetime(2024, 1, 20, 16, 30),
-            amount=Decimal("-189.00"),
-            currency="CNY",
-            payee="京东平台商户",
-            narration="运动T恤两件装",
-            source_account="Liabilities:JD:BaiTiao",
-            reference_id="JD202401200001",
-            counterpart_ref="M20240120001",
-            tx_type="expense",
-            metadata={"jd_refund": "203.98", "jd_original": "392.98"},
-        )
-        _enrich_with_orders(tx, lookup)
-        assert "jd_items" in tx.metadata
-
-    def test_zero_price_item_skipped(self):
-        """Items with price=0 (gifts) should not appear in jd_items."""
-        import json
-
-        fixture = FIXTURES / "jd_orders_sample.json"
-        with open(fixture, encoding="utf-8") as f:
-            data = json.load(f)
-        # Inject a zero-price item into M20240110001
-        for order in data["orders"]:
-            if order["order_id"] == "M20240110001":
-                order["items"].append({"name": "赠品", "quantity": 1, "price": 0})
-                break
-        # Build lookup from modified data
-        synthetic_lookup: dict[str, list[dict]] = {}
-        for order in data["orders"]:
-            if order.get("status") != "已完成":
-                continue
-            key = order.get("parent_order_id") or order.get("order_id")
-            if key:
-                synthetic_lookup.setdefault(str(key), []).append(order)
-
-        tx = self._make_tx("M20240110001")
-        _enrich_with_orders(tx, synthetic_lookup)
-        names = [it["name"] for it in tx.metadata["jd_items"]]
-        assert "赠品" not in names
-        assert "小米空气净化器滤芯" in names
-
-    def test_cancelled_order_skipped(self):
-        """Cancelled orders should not contribute items."""
-        lookup = _load_jd_orders(FIXTURES / "jd_orders_sample.json")
-        # CANCELLED001 is not in the lookup at all
-        assert "CANCELLED001" not in lookup
-
-    def test_fully_gift_card_order_excluded_from_enrichment(self):
-        """amount==0 + gift_card>0 orders should be excluded from CSV enrichment."""
-        lookup = _load_jd_orders(FIXTURES / "jd_orders_sample.json")
-        # GC20240201001 is in the lookup (status=已完成, not cancelled)
-        assert "GC20240201001" in lookup
-        # But _enrich_with_orders skips it because amount==0 and gift_card>0
-        tx = self._make_tx("GC20240201001")
-        _enrich_with_orders(tx, lookup)
-        # No items should have been written (the fully-GC order is excluded)
-        assert "jd_items" not in tx.metadata
-
-    def test_gift_card_amount_in_metadata(self):
-        """Partial gift card payment should write jd_gift_card metadata."""
-        lookup = _load_jd_orders(FIXTURES / "jd_orders_sample.json")
-        tx = self._make_tx("M20240120001", Decimal("-189.00"))
-        _enrich_with_orders(tx, lookup)
-        assert "jd_gift_card" in tx.metadata
-        assert tx.metadata["jd_gift_card"] == "110.0"
-
-    def test_no_match_falls_back_to_standard(self, tmp_path):
-        """TX with no matching order should not get jd_items."""
-        lookup = _load_jd_orders(FIXTURES / "jd_orders_sample.json")
-        tx = self._make_tx("NONEXISTENT999")
-        _enrich_with_orders(tx, lookup)
-        assert "jd_items" not in tx.metadata
-
-    def test_parent_order_id_grouping(self):
-        """Multiple sub-orders with same parent_order_id all map to parent key."""
-        lookup = _load_jd_orders(FIXTURES / "jd_orders_sample.json")
-        tx = self._make_tx("PARENT001", Decimal("-50.00"))
-        _enrich_with_orders(tx, lookup)
-        assert "jd_items" in tx.metadata
-        items = tx.metadata["jd_items"]
-        names = [it["name"] for it in items]
-        assert "子订单商品A" in names
-        assert "子订单商品B" in names
-
-    def test_extract_with_orders_file_enriches(self):
-        """JdImporter with orders_file should enrich extracted transactions."""
-        importer = JdImporter(orders_file=FIXTURES / "jd_orders_sample.json")
-        txns = importer.extract(FIXTURES / "jd_sample.csv")
-        # tx0 (M20240110001) should have jd_items
-        tx0 = txns[0]
-        assert "jd_items" in tx0.metadata
-        # transfer tx (BaiTiao repayment) should NOT be enriched
-        tx1 = txns[1]
-        assert "jd_items" not in tx1.metadata
-
-    def test_extract_without_orders_file_no_enrichment(self):
-        """JdImporter without orders_file should NOT enrich transactions."""
-        importer = JdImporter()
-        txns = importer.extract(FIXTURES / "jd_sample.csv")
-        for tx in txns:
-            assert "jd_items" not in tx.metadata
-
-
 # --- JdOrdersImporter ---
 
 
@@ -374,30 +209,43 @@ class TestJdOrdersImporter:
         importer = JdOrdersImporter()
         assert not importer.identify(FIXTURES / "jd_sample.csv")
 
-    def test_extract_gift_card_orders_only(self):
-        """Should extract only the fully gift-card-paid order."""
+    def test_extract_all_completed_orders(self):
+        """Should extract all completed orders (not just gift-card ones)."""
         importer = JdOrdersImporter()
         txns = importer.extract(FIXTURES / "jd_orders_sample.json")
-        assert len(txns) == 1
-        tx = txns[0]
-        assert tx.amount == Decimal("-53.10")
-        assert tx.source_account == "Assets:JD:GiftCard"
-        assert tx.reference_id == "GC20240201001"
+        # Now processes all completed orders, not just gift-card ones
+        assert len(txns) >= 1
+        # Verify gift-card order is still included
+        gc_txns = [tx for tx in txns if tx.reference_id == "GC20240201001"]
+        assert len(gc_txns) == 1
+        gc_tx = gc_txns[0]
+        assert gc_tx.source_account == "Assets:JD:GiftCard"
+        assert gc_tx.amount == Decimal("-53.10")
 
-    def test_cash_orders_not_extracted(self):
-        """Orders with cash payment should NOT be extracted."""
+    def test_cash_orders_now_extracted(self):
+        """Cash-paid orders are now extracted with Clearing:JD as source."""
         importer = JdOrdersImporter()
         txns = importer.extract(FIXTURES / "jd_orders_sample.json")
-        for tx in txns:
-            # No cash-paid order IDs should appear
-            assert tx.reference_id not in ("M20240110001", "M20240120001")
+        cash_txns = [tx for tx in txns if tx.reference_id == "M20240110001"]
+        assert len(cash_txns) == 1
+        assert cash_txns[0].source_account == "Assets:Clearing:JD"
+
+    def test_mixed_payment_has_gift_card_metadata(self):
+        """Mixed cash + gift card orders have jd_gift_card metadata."""
+        importer = JdOrdersImporter()
+        txns = importer.extract(FIXTURES / "jd_orders_sample.json")
+        mixed_txns = [tx for tx in txns if tx.reference_id == "M20240120001"]
+        assert len(mixed_txns) == 1
+        assert "jd_gift_card" in mixed_txns[0].metadata
+        assert mixed_txns[0].source_account == "Assets:Clearing:JD"
 
     def test_zero_price_items_skipped(self):
         """Gift items (price=0) should not appear in jd_items."""
         importer = JdOrdersImporter()
         txns = importer.extract(FIXTURES / "jd_orders_sample.json")
-        assert len(txns) == 1
-        items = txns[0].metadata["jd_items"]
+        gc_txns = [tx for tx in txns if tx.reference_id == "GC20240201001"]
+        assert len(gc_txns) == 1
+        items = gc_txns[0].metadata["jd_items"]
         names = [it["name"] for it in items]
         assert "赠品贴纸" not in names
         assert "松下毛球修剪器" in names
@@ -406,7 +254,8 @@ class TestJdOrdersImporter:
         """Single item → narration is the item name."""
         importer = JdOrdersImporter()
         txns = importer.extract(FIXTURES / "jd_orders_sample.json")
-        assert txns[0].narration == "松下毛球修剪器"
+        gc_txns = [tx for tx in txns if tx.reference_id == "GC20240201001"]
+        assert gc_txns[0].narration == "松下毛球修剪器"
 
     def test_cancelled_orders_not_extracted(self):
         """Cancelled orders should not be extracted."""
@@ -417,7 +266,7 @@ class TestJdOrdersImporter:
 
     def test_account_name(self):
         importer = JdOrdersImporter()
-        assert importer.account_name() == "Assets:JD:GiftCard"
+        assert importer.account_name() == "Assets:Clearing:JD"
 
 
 # --- JD Writer Tests ---
@@ -444,7 +293,7 @@ class TestJdWriter:
             currency="CNY",
             payee="京东平台商户",
             narration="test order",
-            source_account="Liabilities:CreditCard:CMB",
+            source_account="Assets:Clearing:JD",
             reference_id="JD202401100001",
             tx_type="expense",
             metadata=metadata,
@@ -495,7 +344,7 @@ class TestJdWriter:
         bean_tx = multiposting_transaction_to_bean(tx, by_category, gift_card_amount=gift_card)
 
         accounts = [p.account for p in bean_tx.postings]
-        assert "Liabilities:CreditCard:CMB" in accounts
+        assert "Assets:Clearing:JD" in accounts
         assert "Assets:JD:GiftCard" in accounts
         assert "Expenses:Shopping:Clothing" in accounts
         assert len(bean_tx.postings) == 3
@@ -565,7 +414,7 @@ class TestJdWriter:
 
         content = output.read_text(encoding="utf-8")
         assert "京东平台商户" in content
-        assert "Liabilities:CreditCard:CMB" in content
+        assert "Assets:Clearing:JD" in content
         assert "Expenses:Shopping:Electronics" in content
         assert "空气净化器滤芯 x1" in content
 

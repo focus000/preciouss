@@ -4,11 +4,30 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from preciouss.importers.base import CsvImporter, Transaction
+from preciouss.importers.clearing import detect_merchant_clearing, resolve_payment_to_clearing
+
+_ACCEPTED_STATUS_EXACT = frozenset(
+    {
+        "支付成功", "已转账", "已存入零钱", "已收钱", "朋友已收钱", "已全额退款",
+        "对方已收钱",  # transfer accepted by other party
+        "对方已退还",  # money returned by other party
+        "充值成功",    # recharge micro-rewards (income)
+        "已到账",      # payment arrived (income)
+    }
+)
+_RE_REFUND_AMOUNT = re.compile(r"已退款[（(]￥([\d.]+)[）)]")
+_RE_INCOME_TOTAL = re.compile(r"收入：\d+笔\s*([\d.]+)元")
+_RE_EXPENSE_TOTAL = re.compile(r"支出：\d+笔\s*([\d.]+)元")
+
+
+def _accept_status(status: str) -> bool:
+    return status in _ACCEPTED_STATUS_EXACT or status.startswith("已退款")
 
 
 class WechatImporter(CsvImporter):
@@ -77,6 +96,7 @@ class WechatImporter(CsvImporter):
         if header_idx is None:
             return []
 
+        header_lines = lines[:header_idx]
         csv_lines = lines[header_idx:]
         csv_content = "\n".join(csv_lines)
 
@@ -87,6 +107,10 @@ class WechatImporter(CsvImporter):
             tx = self._parse_row(row)
             if tx is not None:
                 transactions.append(tx)
+
+        totals = self._parse_header_totals(header_lines)
+        if totals is not None:
+            self._validate_totals(transactions, totals[0], totals[1], filepath)
 
         return transactions
 
@@ -124,6 +148,7 @@ class WechatImporter(CsvImporter):
 
         headers = None
         transactions = []
+        header_buffer: list[str] = []
 
         for row in ws.iter_rows(values_only=True):
             # Convert all cells to strings
@@ -133,6 +158,8 @@ class WechatImporter(CsvImporter):
             if headers is None:
                 if cells and cells[0] == "交易时间":
                     headers = cells
+                else:
+                    header_buffer.append(" ".join(cells))
                 continue
 
             # Build dict from row using headers
@@ -144,7 +171,47 @@ class WechatImporter(CsvImporter):
                 transactions.append(tx)
 
         wb.close()
+
+        totals = self._parse_header_totals(header_buffer)
+        if totals is not None:
+            self._validate_totals(transactions, totals[0], totals[1], filepath)
+
         return transactions
+
+    # --- Header total validation ---
+
+    @staticmethod
+    def _parse_header_totals(lines: list[str]) -> tuple[Decimal, Decimal] | None:
+        income_total = None
+        expense_total = None
+        for line in lines:
+            m = _RE_INCOME_TOTAL.search(line)
+            if m:
+                income_total = Decimal(m.group(1))
+            m = _RE_EXPENSE_TOTAL.search(line)
+            if m:
+                expense_total = Decimal(m.group(1))
+        if income_total is not None and expense_total is not None:
+            return income_total, expense_total
+        return None
+
+    def _validate_totals(
+        self,
+        transactions: list[Transaction],
+        expected_income: Decimal,
+        expected_expense: Decimal,
+        filepath: Path,
+    ) -> None:
+        actual_income = sum(tx.amount for tx in transactions if tx.tx_type == "income")
+        actual_expense = sum(-tx.amount for tx in transactions if tx.tx_type == "expense")
+        if abs(actual_income - expected_income) > Decimal("0.01"):
+            raise ValueError(
+                f"[{filepath.name}] income {actual_income} ≠ expected {expected_income}"
+            )
+        if abs(actual_expense - expected_expense) > Decimal("0.01"):
+            raise ValueError(
+                f"[{filepath.name}] expense {actual_expense} ≠ expected {expected_expense}"
+            )
 
     # --- Shared parsing ---
 
@@ -161,8 +228,14 @@ class WechatImporter(CsvImporter):
 
         # Parse status - skip non-completed transactions
         status = row.get("当前状态", "").strip()
-        if status not in ("支付成功", "已转账", "已存入零钱", "已收钱", "已退款", "朋友已收钱"):
+        if not _accept_status(status):
             return None
+
+        # Extract partial refund amount from status if present
+        refund_amount: str | None = None
+        m = _RE_REFUND_AMOUNT.match(status)
+        if m:
+            refund_amount = m.group(1)
 
         # Parse amount - remove ¥ prefix
         amount_str = row.get("金额(元)", "").strip()
@@ -192,8 +265,14 @@ class WechatImporter(CsvImporter):
         merchant_no = row.get("商户单号", "").strip().strip("\t")
         tx_type_raw = row.get("交易类型", "").strip()
 
-        # Resolve payment account
-        resolved_account = self._resolve_payment(payment_method)
+        # Resolve payment account via clearing
+        if payment_method and payment_method not in ("", "/"):
+            resolved_account = resolve_payment_to_clearing(payment_method, "WX")
+        else:
+            resolved_account = self._account
+
+        # Detect known merchants → counter_account (clearing)
+        counter_account = detect_merchant_clearing("WX", payee, narration)
 
         return Transaction(
             date=date,
@@ -207,8 +286,10 @@ class WechatImporter(CsvImporter):
             counterpart_ref=merchant_no if merchant_no and merchant_no != "/" else None,
             raw_category=tx_type_raw or None,
             tx_type=tx_type,
+            counter_account=counter_account,
             metadata={
                 "wechat_status": status,
                 "wechat_type": tx_type_raw,
+                **({"wechat_refund_amount": refund_amount} if refund_amount else {}),
             },
         )

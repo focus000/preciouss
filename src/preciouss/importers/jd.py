@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from preciouss.importers.base import CsvImporter, PrecioussImporter, Transaction
+from preciouss.importers.clearing import resolve_payment_to_clearing
 from preciouss.importers.resolve import resolve_payment_account
 
 _AMOUNT_RE = re.compile(r"^([\d.]+)(?:[（(]已(?:全额)?退款([\d.]*)[）)])?$")
@@ -98,53 +99,12 @@ def _load_jd_orders(orders_file: str | Path) -> dict[str, list[dict]]:
     return lookup
 
 
-def _enrich_with_orders(tx: Transaction, lookup: dict[str, list[dict]]) -> None:
-    """Enrich a transaction with item details from the JD orders lookup.
-
-    Writes jd_items (and optionally jd_gift_card) into tx.metadata in-place.
-    Fully gift-card orders (amount==0) are excluded from CSV enrichment.
-    """
-    key = tx.counterpart_ref
-    if not key or key not in lookup:
-        return
-
-    categorizer = JdItemCategorizer()
-    jd_items: list[dict] = []
-    gift_card_total = Decimal(0)
-
-    for order in lookup[key]:
-        goods_total = order.get("goods_total", {})
-        order_amount = Decimal(str(order.get("amount", 0)))
-        gift_card = abs(Decimal(str(goods_total.get("礼品卡和领货码", 0))))
-
-        # Skip fully gift-card orders (not in CSV, handled by JdOrdersImporter)
-        if order_amount == 0 and gift_card > 0:
-            continue
-
-        if gift_card > 0:
-            gift_card_total += gift_card
-
-        for item in order.get("items", []):
-            price = Decimal(str(item.get("price", 0)))
-            if price == 0:
-                continue
-            jd_items.append(
-                {
-                    "name": item["name"],
-                    "num": item["quantity"],
-                    "price": str(price),
-                    "category": categorizer.categorize(item["name"]),
-                }
-            )
-
-    if jd_items:
-        tx.metadata["jd_items"] = jd_items
-    if gift_card_total > 0:
-        tx.metadata["jd_gift_card"] = str(gift_card_total)
-
-
 class JdImporter(CsvImporter):
     """Import transactions from JD (京东) CSV exports.
+
+    Pure bridge mode: all expense transactions produce
+    source_account → Assets:Clearing:JD (counter_account).
+    The actual expense categorization is handled by JdOrdersImporter.
 
     JD CSV format:
     - 21 metadata lines before the header
@@ -163,7 +123,8 @@ class JdImporter(CsvImporter):
     ):
         self._account = account
         self._currency = currency
-        self._orders = _load_jd_orders(orders_file) if orders_file else None
+        # orders_file kept for backward compat but no longer used for enrichment
+        self._orders_file = orders_file
 
     def account_name(self) -> str:
         return self._account
@@ -179,14 +140,6 @@ class JdImporter(CsvImporter):
             return "京东账号名" in first_lines
         except Exception:
             return False
-
-    def extract(self, filepath) -> list[Transaction]:
-        transactions = super().extract(filepath)
-        if self._orders:
-            for tx in transactions:
-                if tx.tx_type != "transfer":
-                    _enrich_with_orders(tx, self._orders)
-        return transactions
 
     def _parse_row(self, row: dict[str, str]) -> Transaction | None:
         # Parse status — skip non-completed
@@ -218,8 +171,11 @@ class JdImporter(CsvImporter):
         merchant_no = row.get("商家订单号", "").strip()
         raw_category = row.get("交易分类", "").strip()
 
-        # Resolve payment account
-        source_account = self._resolve_payment(payment_method)
+        # Resolve payment → clearing account
+        if payment_method and payment_method != "/":
+            source_account = resolve_payment_to_clearing(payment_method, "JD")
+        else:
+            source_account = "Assets:Clearing:JD:Unknown"
 
         if direction == "支出":
             if refund is not None:
@@ -228,23 +184,27 @@ class JdImporter(CsvImporter):
                     return None
                 # Partial refund: net amount
                 amount = -(original - refund)
-                metadata = {"jd_refund": str(refund), "jd_original": str(original)}
+                metadata: dict = {"jd_refund": str(refund), "jd_original": str(original)}
             else:
                 amount = -original
                 metadata = {}
             tx_type = "expense"
+            counter_account = "Assets:Clearing:JD"
 
         elif direction == "收入":
             amount = original
             tx_type = "income"
             metadata = {}
+            counter_account = None
 
         elif direction == "不计收支":
             amount = -original
             tx_type = "transfer"
+            metadata = {}
+            counter_account = None
             if "还款" in narration:
                 # BaiTiao repayment: money flows from bank to BaiTiao
-                metadata = {"transfer_account": "Liabilities:JD:BaiTiao"}
+                counter_account = "Liabilities:JD:BaiTiao"
             elif "小金库" in narration or "小金库" in payee:
                 if "取出" in narration:
                     # XiaoJinKu → bank: force source = XiaoJinKu, target = payment method
@@ -254,13 +214,13 @@ class JdImporter(CsvImporter):
                         if payment_method and payment_method != "/"
                         else "Assets:Unknown"
                     )
-                    # Prevent source == target (if payment_method also resolves to XiaoJinKu)
+                    # Prevent source == target
                     if target == "Assets:JD:XiaoJinKu":
                         target = "Assets:Unknown"
-                    metadata = {"transfer_account": target}
+                    counter_account = target
                 else:
-                    # Bank → XiaoJinKu: source_account already resolved from payment_method
-                    metadata = {"transfer_account": "Assets:JD:XiaoJinKu"}
+                    # Bank → XiaoJinKu: source_account already resolved
+                    counter_account = "Assets:JD:XiaoJinKu"
             else:
                 # Other non-counted: full refunds, etc.
                 return None
@@ -279,17 +239,21 @@ class JdImporter(CsvImporter):
             counterpart_ref=merchant_no if merchant_no else None,
             raw_category=raw_category or None,
             tx_type=tx_type,
+            counter_account=counter_account,
             metadata=metadata,
         )
 
 
 class JdOrdersImporter(PrecioussImporter):
-    """Import fully gift-card-paid JD orders from the orders JSON export.
+    """Import JD orders from the orders JSON export.
 
-    These orders have amount==0 and are not present in the CSV statement.
+    Handles ALL completed orders:
+    - Full cash: Assets:Clearing:JD → Expenses
+    - Mixed (cash + gift card): Assets:Clearing:JD + Assets:JD:GiftCard → Expenses
+    - Full gift card: Assets:JD:GiftCard → Expenses
     """
 
-    def __init__(self, account: str = "Assets:JD:GiftCard", currency: str = "CNY"):
+    def __init__(self, account: str = "Assets:Clearing:JD", currency: str = "CNY"):
         self._account = account
         self._currency = currency
 
@@ -326,8 +290,8 @@ class JdOrdersImporter(PrecioussImporter):
             amount = Decimal(str(order.get("amount", 0)))
             gift_card = abs(Decimal(str(goods_total.get("礼品卡和领货码", 0))))
 
-            # Only process fully gift-card-paid orders
-            if amount != 0 or gift_card == 0:
+            total_cost = amount + gift_card
+            if total_cost == 0:
                 continue
 
             jd_items: list[dict] = []
@@ -355,17 +319,32 @@ class JdOrdersImporter(PrecioussImporter):
             else:
                 narration = f"{jd_items[0]['name']}等{len(jd_items)}件"
 
+            # Determine source account based on payment split
+            if amount > 0:
+                # Has cash portion → source is clearing
+                source_account = "Assets:Clearing:JD"
+                source_amount = -amount
+            else:
+                # Fully gift card
+                source_account = "Assets:JD:GiftCard"
+                source_amount = -gift_card
+
+            metadata: dict = {"jd_items": jd_items}
+            if gift_card > 0 and amount > 0:
+                # Mixed payment: gift card amount stored in metadata
+                metadata["jd_gift_card"] = str(gift_card)
+
             transactions.append(
                 Transaction(
                     date=date,
-                    amount=-gift_card,
+                    amount=source_amount,
                     currency=self._currency,
                     payee="京东平台商户",
                     narration=narration,
-                    source_account=self._account,
+                    source_account=source_account,
                     reference_id=order.get("order_id"),
                     tx_type="expense",
-                    metadata={"jd_items": jd_items},
+                    metadata=metadata,
                 )
             )
 

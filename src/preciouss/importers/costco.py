@@ -76,7 +76,7 @@ class CostcoImporter(PrecioussImporter):
     match against Alipay/WeChat counterpart_ref for payment resolution.
     """
 
-    def __init__(self, account: str = "Assets:Unknown", currency: str = "CNY"):
+    def __init__(self, account: str = "Assets:Clearing:Costco", currency: str = "CNY"):
         self._account = account
         self._currency = currency
         self._categorizer = CostcoItemCategorizer()

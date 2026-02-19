@@ -97,12 +97,12 @@ class TestExtract:
         assert txns[0].payee == "ALDI奥乐齐"
         assert txns[0].narration == "ALDI奥乐齐(苏州环宇荟店)"
 
-    def test_source_account_is_unknown(self):
-        """Initial source_account should be Assets:Unknown."""
+    def test_source_account_is_clearing(self):
+        """Initial source_account should be Assets:Clearing:ALDI."""
         importer = AldiImporter()
         txns = importer.extract(FIXTURES / "aldi_sample.json")
         for tx in txns:
-            assert tx.source_account == "Assets:Unknown"
+            assert tx.source_account == "Assets:Clearing:ALDI"
 
     def test_reference_id(self):
         importer = AldiImporter()
@@ -381,222 +381,6 @@ class TestMultiposting:
         assert "湿巾 x1" in content
 
 
-# --- Merge ---
-
-
-class TestMerge:
-    def test_merge_with_wechat(self):
-        """ALDI tx should inherit source_account from matching WeChat tx."""
-        from preciouss.cli import _merge_aldi_with_payments
-        from preciouss.importers.wechat import WechatImporter
-
-        aldi_imp = AldiImporter()
-        wechat_imp = WechatImporter()
-
-        aldi_tx = Transaction(
-            date=datetime(2026, 1, 18, 11, 10),
-            amount=Decimal("-85.70"),
-            currency="CNY",
-            payee="ALDI奥乐齐",
-            narration="ALDI奥乐齐(苏州环宇荟店)",
-            source_account="Assets:Unknown",
-            reference_id="260118463558598993",
-            tx_type="expense",
-            metadata={"aldi_items": []},
-        )
-        wechat_tx = Transaction(
-            date=datetime(2026, 1, 18, 11, 12),
-            amount=Decimal("-85.70"),
-            currency="CNY",
-            payee="奥乐齐",
-            narration="ALDI",
-            source_account="Assets:WeChat",
-            payment_method="招商银行信用卡(1234)",
-            tx_type="expense",
-        )
-
-        aldi_id = id(aldi_imp)
-        wechat_id = id(wechat_imp)
-
-        all_txns = {aldi_id: [aldi_tx], wechat_id: [wechat_tx]}
-        imp_map = {aldi_id: aldi_imp, wechat_id: wechat_imp}
-
-        _merge_aldi_with_payments(all_txns, imp_map)
-
-        assert aldi_tx.source_account == "Assets:WeChat"
-        assert aldi_tx.payment_method == "招商银行信用卡(1234)"
-
-    def test_merge_removes_payment_tx(self):
-        """Matched payment tx should be removed from its list."""
-        from preciouss.cli import _merge_aldi_with_payments
-        from preciouss.importers.wechat import WechatImporter
-
-        aldi_imp = AldiImporter()
-        wechat_imp = WechatImporter()
-
-        aldi_tx = Transaction(
-            date=datetime(2026, 1, 18, 11, 10),
-            amount=Decimal("-85.70"),
-            currency="CNY",
-            payee="ALDI奥乐齐",
-            narration="ALDI奥乐齐(苏州环宇荟店)",
-            source_account="Assets:Unknown",
-            reference_id="260118463558598993",
-            tx_type="expense",
-            metadata={"aldi_items": []},
-        )
-        wechat_tx = Transaction(
-            date=datetime(2026, 1, 18, 11, 12),
-            amount=Decimal("-85.70"),
-            currency="CNY",
-            payee="奥乐齐",
-            narration="购物",
-            source_account="Assets:WeChat",
-            tx_type="expense",
-        )
-        other_tx = Transaction(
-            date=datetime(2026, 1, 18, 12, 0),
-            amount=Decimal("-30.00"),
-            currency="CNY",
-            payee="星巴克",
-            narration="咖啡",
-            source_account="Assets:WeChat",
-            tx_type="expense",
-        )
-
-        aldi_id = id(aldi_imp)
-        wechat_id = id(wechat_imp)
-
-        wechat_list = [wechat_tx, other_tx]
-        all_txns = {aldi_id: [aldi_tx], wechat_id: wechat_list}
-        imp_map = {aldi_id: aldi_imp, wechat_id: wechat_imp}
-
-        _merge_aldi_with_payments(all_txns, imp_map)
-
-        # wechat_tx removed, other_tx remains
-        assert len(wechat_list) == 1
-        assert wechat_list[0].payee == "星巴克"
-
-    def test_merge_unmatched_keeps_unknown(self):
-        """Unmatched ALDI tx should keep Assets:Unknown."""
-        from preciouss.cli import _merge_aldi_with_payments
-        from preciouss.importers.wechat import WechatImporter
-
-        aldi_imp = AldiImporter()
-        wechat_imp = WechatImporter()
-
-        aldi_tx = Transaction(
-            date=datetime(2026, 1, 18, 11, 10),
-            amount=Decimal("-85.70"),
-            currency="CNY",
-            payee="ALDI奥乐齐",
-            narration="ALDI奥乐齐(苏州环宇荟店)",
-            source_account="Assets:Unknown",
-            reference_id="260118463558598993",
-            tx_type="expense",
-            metadata={"aldi_items": []},
-        )
-        # No matching WeChat tx
-        wechat_tx = Transaction(
-            date=datetime(2026, 1, 18, 12, 0),
-            amount=Decimal("-30.00"),
-            currency="CNY",
-            payee="星巴克",
-            narration="咖啡",
-            source_account="Assets:WeChat",
-            tx_type="expense",
-        )
-
-        aldi_id = id(aldi_imp)
-        wechat_id = id(wechat_imp)
-
-        all_txns = {aldi_id: [aldi_tx], wechat_id: [wechat_tx]}
-        imp_map = {aldi_id: aldi_imp, wechat_id: wechat_imp}
-
-        _merge_aldi_with_payments(all_txns, imp_map)
-
-        assert aldi_tx.source_account == "Assets:Unknown"
-
-    def test_merge_date_tolerance(self):
-        """Match should work within 1 day tolerance."""
-        from preciouss.cli import _merge_aldi_with_payments
-        from preciouss.importers.wechat import WechatImporter
-
-        aldi_imp = AldiImporter()
-        wechat_imp = WechatImporter()
-
-        aldi_tx = Transaction(
-            date=datetime(2026, 1, 18, 11, 10),
-            amount=Decimal("-50.00"),
-            currency="CNY",
-            payee="ALDI奥乐齐",
-            narration="ALDI奥乐齐(test)",
-            source_account="Assets:Unknown",
-            reference_id="test123",
-            tx_type="expense",
-            metadata={"aldi_items": []},
-        )
-        # Payment is next day (within 1 day)
-        wechat_tx = Transaction(
-            date=datetime(2026, 1, 19, 0, 5),
-            amount=Decimal("-50.00"),
-            currency="CNY",
-            payee="奥乐齐",
-            narration="购物",
-            source_account="Assets:WeChat",
-            tx_type="expense",
-        )
-
-        aldi_id = id(aldi_imp)
-        wechat_id = id(wechat_imp)
-
-        all_txns = {aldi_id: [aldi_tx], wechat_id: [wechat_tx]}
-        imp_map = {aldi_id: aldi_imp, wechat_id: wechat_imp}
-
-        _merge_aldi_with_payments(all_txns, imp_map)
-
-        assert aldi_tx.source_account == "Assets:WeChat"
-
-    def test_merge_no_match_wrong_amount(self):
-        """Different amount should not match."""
-        from preciouss.cli import _merge_aldi_with_payments
-        from preciouss.importers.wechat import WechatImporter
-
-        aldi_imp = AldiImporter()
-        wechat_imp = WechatImporter()
-
-        aldi_tx = Transaction(
-            date=datetime(2026, 1, 18, 11, 10),
-            amount=Decimal("-85.70"),
-            currency="CNY",
-            payee="ALDI奥乐齐",
-            narration="ALDI",
-            source_account="Assets:Unknown",
-            reference_id="test",
-            tx_type="expense",
-            metadata={"aldi_items": []},
-        )
-        wechat_tx = Transaction(
-            date=datetime(2026, 1, 18, 11, 12),
-            amount=Decimal("-85.80"),  # different amount
-            currency="CNY",
-            payee="奥乐齐",
-            narration="购物",
-            source_account="Assets:WeChat",
-            tx_type="expense",
-        )
-
-        aldi_id = id(aldi_imp)
-        wechat_id = id(wechat_imp)
-
-        all_txns = {aldi_id: [aldi_tx], wechat_id: [wechat_tx]}
-        imp_map = {aldi_id: aldi_imp, wechat_id: wechat_imp}
-
-        _merge_aldi_with_payments(all_txns, imp_map)
-
-        assert aldi_tx.source_account == "Assets:Unknown"
-
-
 # --- Beancount Validation ---
 
 
@@ -612,7 +396,7 @@ class TestBeancountValidation:
             currency="CNY",
             payee="ALDI奥乐齐",
             narration="ALDI奥乐齐(苏州环宇荟店)",
-            source_account="Assets:Unknown",
+            source_account="Assets:Clearing:ALDI",
             reference_id="260118463558598993",
             tx_type="expense",
             metadata={
@@ -675,7 +459,7 @@ class TestBeancountValidation:
 class TestAccountName:
     def test_default_account(self):
         importer = AldiImporter()
-        assert importer.account_name() == "Assets:Unknown"
+        assert importer.account_name() == "Assets:Clearing:ALDI"
 
     def test_custom_account(self):
         importer = AldiImporter(account="Assets:Alipay", currency="CNY")

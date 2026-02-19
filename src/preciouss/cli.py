@@ -17,11 +17,6 @@ from preciouss.importers.base import PrecioussImporter, Transaction
 from preciouss.importers.cmb import CmbCreditImporter, CmbDebitImporter
 from preciouss.importers.costco import CostcoImporter
 from preciouss.importers.jd import JdImporter, JdOrdersImporter
-from preciouss.importers.resolve import (
-    PLATFORM_ACCOUNT_PREFIXES,
-    PLATFORM_KEYWORDS,
-    is_platform_account,
-)
 from preciouss.importers.wechat import WechatImporter
 from preciouss.importers.wechathk import WechatHKImporter
 from preciouss.ledger.writer import init_ledger, write_transactions
@@ -199,243 +194,6 @@ def _importer_output_name(importer: PrecioussImporter) -> str:
     return "".join(result)
 
 
-def _find_matching_tx(
-    tx: Transaction,
-    pool: list[Transaction],
-    keywords: list[str],
-) -> int | None:
-    """Find index of a matching transaction in pool.
-
-    Match: exact amount + date within 1 day + keywords in payee/narration.
-    """
-    tx_amount = abs(tx.amount)
-    for i, candidate in enumerate(pool):
-        if abs(candidate.amount) != tx_amount:
-            continue
-        if abs((tx.date.date() - candidate.date.date()).days) > 1:
-            continue
-        text = f"{candidate.payee or ''} {candidate.narration or ''}"
-        if not any(kw in text for kw in keywords):
-            continue
-        return i
-    return None
-
-
-def _resolve_single_tx(
-    tx: Transaction,
-    target_platform: str,
-    platform_to_imp_id: dict[str, int],
-    all_txns_by_importer: dict[int, list[Transaction]],
-    importer_map: dict[int, PrecioussImporter],
-    source_keywords: list[str],
-) -> bool:
-    """Try to resolve a single transaction against a target platform's pool.
-
-    Returns True if a matching shadow transaction was found and resolved.
-    """
-    target_imp_id = platform_to_imp_id.get(target_platform)
-    if target_imp_id is None:
-        return False
-
-    pool = all_txns_by_importer.get(target_imp_id, [])
-
-    idx = _find_matching_tx(tx, pool, source_keywords)
-    if idx is not None:
-        shadow = pool[idx]
-        tx.source_account = shadow.source_account
-        tx.payment_method = shadow.payment_method
-        pool.pop(idx)
-        return True
-
-    return False
-
-
-def _get_source_keywords(importer: PrecioussImporter) -> list[str]:
-    """Get keywords that identify this importer's platform in other platforms' data."""
-    account = importer.account_name()
-    for platform, keywords in PLATFORM_KEYWORDS.items():
-        if account.startswith(platform) or account == platform:
-            return keywords
-    # Fallback: use the class name
-    return [type(importer).__name__.removesuffix("Importer")]
-
-
-def _resolve_cross_platform(
-    all_txns_by_importer: dict[int, list[Transaction]],
-    importer_map: dict[int, PrecioussImporter],
-) -> list[str]:
-    """Resolve cross-platform payment accounts (in-place).
-
-    When JD says "微信支付", find the matching WeChat transaction and inherit
-    its actual payment method (e.g. 招商银行信用卡). Supports recursive chains
-    and detects cycles.
-
-    Returns a list of warning messages for unresolvable transactions.
-    """
-    warnings: list[str] = []
-
-    # Build platform → importer ID mapping
-    platform_to_imp_id: dict[str, int] = {}
-    imp_id_to_platform: dict[int, str] = {}
-    for imp_id, imp in importer_map.items():
-        account = imp.account_name()
-        for prefix in PLATFORM_ACCOUNT_PREFIXES:
-            if account.startswith(prefix) or account == prefix:
-                platform_to_imp_id[prefix] = imp_id
-                imp_id_to_platform[imp_id] = prefix
-                break
-
-    # For each importer, resolve transactions whose source_account is another platform
-    for imp_id, txns in all_txns_by_importer.items():
-        source_keywords = _get_source_keywords(importer_map[imp_id])
-
-        for tx in txns:
-            if not is_platform_account(tx.source_account):
-                continue
-            # Only resolve if it points to a DIFFERENT platform
-            own_platform = imp_id_to_platform.get(imp_id)
-            if tx.source_account == own_platform:
-                continue
-
-            # Resolve with cycle detection
-            visited: set[str] = set()
-            if own_platform:
-                visited.add(own_platform)
-
-            current_target = tx.source_account
-            resolved = False
-            # Track which platform's keywords to use for matching
-            # Initially, use the source importer's keywords (e.g. JD keywords)
-            current_keywords = source_keywords
-
-            while is_platform_account(current_target) and current_target not in visited:
-                prev_target = current_target
-                visited.add(current_target)
-
-                success = _resolve_single_tx(
-                    tx,
-                    current_target,
-                    platform_to_imp_id,
-                    all_txns_by_importer,
-                    importer_map,
-                    current_keywords,
-                )
-
-                if success:
-                    # Check if new source_account needs further resolution
-                    current_target = tx.source_account
-                    if not is_platform_account(current_target):
-                        resolved = True
-                        break
-                    # For the next hop, use the PREVIOUS platform's keywords
-                    # e.g. JD→WeChat→Alipay: Alipay pool needs WeChat keywords
-                    current_keywords = PLATFORM_KEYWORDS.get(prev_target, [])
-                    # Continue resolving (recursive chain)
-                else:
-                    break
-
-            # Fallback: if still a platform account pointing to another importer
-            # This covers: no match, cycle back to own platform, or cycle to visited
-            if not resolved and is_platform_account(tx.source_account):
-                if tx.source_account != own_platform:
-                    tx.source_account = f"{tx.source_account}:Unknown"
-                elif tx.source_account == own_platform and len(visited) > 1:
-                    # Cycle: resolved back to own platform (e.g. JD→WeChat→JD)
-                    tx.source_account = f"{tx.source_account}:Unknown"
-                    msg = f"Cycle detected resolving tx {tx.reference_id}: visited {visited}"
-                    warnings.append(msg)
-
-    return warnings
-
-
-def _merge_aldi_with_payments(
-    all_txns_by_importer: dict[int, list[Transaction]],
-    importer_map: dict[int, PrecioussImporter],
-) -> None:
-    """Merge ALDI orders with payment transactions (in-place).
-
-    For each ALDI transaction:
-    1. Find a matching payment in other importers (amount + date + merchant name)
-    2. If matched → inherit source_account + payment_method, remove the payment tx
-    3. If unmatched → source_account stays "Assets:Unknown"
-    """
-    # Find ALDI importer IDs and payment importer IDs
-    aldi_imp_ids = []
-    payment_imp_ids = []
-    for imp_id, imp in importer_map.items():
-        if isinstance(imp, AldiImporter):
-            aldi_imp_ids.append(imp_id)
-        else:
-            payment_imp_ids.append(imp_id)
-
-    if not aldi_imp_ids or not payment_imp_ids:
-        return
-
-    for aldi_id in aldi_imp_ids:
-        aldi_txns = all_txns_by_importer.get(aldi_id, [])
-        for aldi_tx in aldi_txns:
-            matched = False
-
-            for pay_id in payment_imp_ids:
-                if matched:
-                    break
-                pay_txns = all_txns_by_importer.get(pay_id, [])
-                idx = _find_matching_tx(aldi_tx, pay_txns, ["奥乐齐", "ALDI"])
-                if idx is not None:
-                    pay_tx = pay_txns[idx]
-                    aldi_tx.source_account = pay_tx.source_account
-                    aldi_tx.payment_method = pay_tx.payment_method
-                    pay_txns.pop(idx)
-                    matched = True
-
-
-def _merge_costco_with_payments(
-    all_txns_by_importer: dict[int, list[Transaction]],
-    importer_map: dict[int, PrecioussImporter],
-) -> None:
-    """Merge Costco orders with payment transactions via counterpart_ref exact match.
-
-    Each Costco tx has counterpart_ref = barcode[4:14] (10-digit merchant order).
-    Payment records (Alipay/WeChat) store this same number as counterpart_ref.
-    Matched payment tx is removed from its pool; Costco tx inherits source_account
-    and payment_method.
-    """
-    costco_ids = [imp_id for imp_id, imp in importer_map.items() if isinstance(imp, CostcoImporter)]
-    payment_ids = [imp_id for imp_id in importer_map if imp_id not in set(costco_ids)]
-
-    if not costco_ids or not payment_ids:
-        return
-
-    # Build lookup: counterpart_ref → (pay_txns_list, pay_tx)
-    ref_to_payment: dict[str, tuple[list[Transaction], Transaction]] = {}
-    for pay_id in payment_ids:
-        for pay_tx in all_txns_by_importer.get(pay_id, []):
-            if pay_tx.counterpart_ref:
-                ref_to_payment[pay_tx.counterpart_ref] = (
-                    all_txns_by_importer[pay_id],
-                    pay_tx,
-                )
-
-    for costco_id in costco_ids:
-        for costco_tx in all_txns_by_importer.get(costco_id, []):
-            merchant_order = costco_tx.counterpart_ref
-            if not merchant_order or merchant_order not in ref_to_payment:
-                continue
-            pay_txns, pay_tx = ref_to_payment.pop(merchant_order)
-            costco_tx.source_account = pay_tx.source_account
-            costco_tx.payment_method = pay_tx.payment_method
-            # Cross-currency: payment in HKD for CNY-priced receipt
-            if pay_tx.metadata.get("wechathk_foreign_amount"):
-                # WechatHK paid HKD for a CNY-priced Costco receipt
-                costco_tx.metadata["costco_payment_amount"] = str(abs(pay_tx.amount))
-                costco_tx.metadata["costco_payment_currency"] = pay_tx.currency
-            elif pay_tx.currency != costco_tx.currency:
-                # Generic cross-currency fallback for other payment methods
-                costco_tx.metadata["costco_payment_amount"] = str(abs(pay_tx.amount))
-                costco_tx.metadata["costco_payment_currency"] = pay_tx.currency
-            pay_txns.remove(pay_tx)
-
-
 def _validate_ledger(ledger_dir: Path, main_file: str) -> None:
     """Validate the generated beancount ledger and report errors."""
     from beancount.loader import load_file
@@ -605,19 +363,26 @@ def import_cmd(
 
         all_txns_by_importer[imp_id] = all_txns
 
-    # Phase 2.5a: Resolve cross-platform payment accounts
-    cross_platform_warnings = _resolve_cross_platform(all_txns_by_importer, importer_map)
-    for w in cross_platform_warnings:
-        warnings.append(w)
-        click.echo(f"  Warning: {w}", err=True)
+    # Phase 2.5: Clearing link assignment (DFS from terminal expenses)
+    from preciouss.matching.clearing import assign_clearing_links
 
-    # Phase 2.5b: Merge ALDI orders with payment transactions
-    _merge_aldi_with_payments(all_txns_by_importer, importer_map)
+    all_flat: list[Transaction] = []
+    tx_importer_map: dict[int, PrecioussImporter] = {}
+    for imp_id, txns in all_txns_by_importer.items():
+        for tx in txns:
+            tx_importer_map[len(all_flat)] = importer_map[imp_id]
+            all_flat.append(tx)
 
-    # Phase 2.5c: Merge Costco orders with payment transactions
-    _merge_costco_with_payments(all_txns_by_importer, importer_map)
+    if all_flat:
+        clr_stats = assign_clearing_links(all_flat, tx_importer_map)
+        if clr_stats.total_chains > 0:
+            click.echo(
+                f"\nClearing: {clr_stats.total_chains} chains, "
+                f"{clr_stats.total_linked} linked, "
+                f"{clr_stats.unmatched_terminal} unmatched"
+            )
 
-    # Phase 3: Write per importer
+    # Phase 3: Write per importer (each importer is independent, no cross-source mutations)
     for imp_id, all_txns in all_txns_by_importer.items():
         importer = importer_map[imp_id]
 
@@ -656,9 +421,10 @@ def import_cmd(
 
 
 @main.command()
+@click.option("--dry-run", is_flag=True, help="Show matches without modifying files")
 @click.pass_context
-def match(ctx: click.Context) -> None:
-    """Run the matching engine on imported transactions."""
+def match(ctx: click.Context, dry_run: bool) -> None:
+    """DFS match clearing account chains, propagate ^link."""
     config: Config = ctx.obj["config"]
 
     # Load all imported transactions
@@ -669,9 +435,10 @@ def match(ctx: click.Context) -> None:
         click.echo("No imported files found. Run 'preciouss import' first.", err=True)
         sys.exit(1)
 
-    # For now, just show a message - full implementation in Phase 2
-    click.echo("Matching engine: Phase 1 (reference ID), Phase 2 (intermediary), Phase 3 (fuzzy)")
-    click.echo("This feature will be fully implemented in Phase 2.")
+    click.echo("Clearing account matching engine")
+    click.echo("This feature will be fully implemented in Phase 7.")
+    if dry_run:
+        click.echo("(dry-run mode)")
 
 
 @main.command()

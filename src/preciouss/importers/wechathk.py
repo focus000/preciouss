@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from preciouss.importers.base import PrecioussImporter, Transaction
+from preciouss.importers.clearing import detect_merchant_clearing
 
 
 def _parse_foreign_price(foreign_price: str) -> tuple[Decimal, str] | None:
@@ -134,6 +135,9 @@ class WechatHKImporter(PrecioussImporter):
         if is_refund:
             metadata["wechathk_refund"] = "true"
 
+        # Detect known merchants → counter_account (clearing)
+        counter_account = detect_merchant_clearing("WeChatHK", merchant, narration)
+
         return Transaction(
             date=date,
             amount=amount,
@@ -145,5 +149,6 @@ class WechatHKImporter(PrecioussImporter):
             reference_id=payrecord_id if payrecord_id else None,
             counterpart_ref=out_trade_no if out_trade_no else None,
             tx_type=tx_type,
+            counter_account=counter_account,
             metadata=metadata,
         )

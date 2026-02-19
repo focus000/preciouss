@@ -127,23 +127,36 @@ cp config.example.toml config.toml
 ## 数据流
 
 ```
-CSV/PDF/API
+CSV/JSON/XLSX
     │
     ▼
 Importer (解析为中间 Transaction 格式)
-    │
+    │  每笔交易独立导入；跨平台重复不合并，而是通过清算账户桥接
     ▼
-Matcher (三阶段匹配，合并跨平台交易)
-    │
+Clearing Engine (DFS 清算链匹配)
+    │  从"终端支出"向上追溯清算账户链，分配共享 ^clr-NNNNNN 链接标签
+    │  终端支出 = source_account 是清算账户 + counter_account 是消费账户
     ▼
-Categorizer (规则 → ML → 人工标记)
-    │
+Categorizer (规则分类)
+    │  关键词/正则 → Beancount 账户；感知收支方向
     ▼
 Ledger Writer (写入 .bean 文件)
-    │
+    │  普通交易 / 多 posting（ALDI/Costco/JD） / 跨币种桥接（WeChatHK）
     ▼
 Fava (可视化 + 编辑)
 ```
+
+### 清算账户设计
+
+跨平台交易不做运行时合并，而是通过 `Assets:Clearing:*` 账户自然对冲：
+
+```
+微信支付  →  Assets:Clearing:JD:WX        ←  京东收款
+ALDI 收据 ←  Assets:Clearing:ALDI         ←  微信/支付宝付款
+WechatHK  →  Assets:Clearing:Costco (HKD) ←  Costco 收据 (CNY, @ rate)
+```
+
+`preciouss import` 时自动运行 DFS 清算链匹配，将相关交易用 `^clr-NNNNNN` 链接标签关联，便于在 Fava 中查看完整链路。
 
 ## 开发
 

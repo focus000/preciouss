@@ -180,8 +180,8 @@ def test_ledger_validates_multi_currency_mixed(tmp_path):
     assert errors == [], f"Beancount validation errors: {errors}"
 
 
-def test_transfer_account_metadata(tmp_path):
-    """Transactions with transfer_account metadata use it as counter account."""
+def test_counter_account(tmp_path):
+    """Transactions with counter_account use it as counter account."""
     txns = [
         Transaction(
             date=datetime(2024, 1, 15),
@@ -191,7 +191,7 @@ def test_transfer_account_metadata(tmp_path):
             narration="白条还款-1月",
             source_account="Assets:Bank:CMB",
             tx_type="transfer",
-            metadata={"transfer_account": "Liabilities:JD:BaiTiao"},
+            counter_account="Liabilities:JD:BaiTiao",
         ),
     ]
     combined = _init_and_write(tmp_path, txns)
@@ -199,3 +199,117 @@ def test_transfer_account_metadata(tmp_path):
     assert errors == [], f"Beancount validation errors: {errors}"
     assert "Liabilities:JD:BaiTiao" in combined
     assert "Assets:Bank:CMB" in combined
+
+
+def test_cross_currency_bridge_validates(tmp_path):
+    """WechatHK->Costco clearing bridge (HKD source, CNY counter) passes beancount."""
+    tx = Transaction(
+        date=datetime(2026, 1, 17),
+        amount=Decimal("-618.26"),
+        currency="HKD",
+        payee="Costco开市客",
+        narration="",
+        source_account="Assets:WeChatHK",
+        tx_type="expense",
+        counter_account="Assets:Clearing:Costco",
+        metadata={
+            "wechathk_foreign_amount": "570.80",
+            "wechathk_foreign_currency": "CNY",
+        },
+    )
+    combined = _init_and_write(tmp_path, [tx])
+    _, errors, _ = load_string(combined)
+    assert errors == [], f"Beancount validation errors: {errors}"
+    # Source is HKD with @ rate
+    assert "HKD" in combined
+    assert "@ " in combined
+    # Counter is CNY
+    assert "Assets:Clearing:Costco" in combined
+    assert "570.80 CNY" in combined
+
+
+def test_link_metadata_in_output(tmp_path):
+    """Transaction with link metadata should include ^link in beancount output."""
+    tx = Transaction(
+        date=datetime(2024, 1, 15),
+        amount=Decimal("-35.00"),
+        currency="CNY",
+        payee="星巴克",
+        narration="咖啡",
+        source_account="Assets:Alipay",
+        tx_type="expense",
+        metadata={"link": "clearing-a1b2c3d4"},
+    )
+    combined = _init_and_write(tmp_path, [tx])
+    _, errors, _ = load_string(combined)
+    assert errors == [], f"Beancount validation errors: {errors}"
+    assert "^clearing-a1b2c3d4" in combined
+
+
+def test_link_metadata_on_bridge(tmp_path):
+    """Bridge transaction with link metadata should include ^link."""
+    tx = Transaction(
+        date=datetime(2024, 1, 15),
+        amount=Decimal("-149.00"),
+        currency="CNY",
+        payee="京东",
+        narration="京东购物",
+        source_account="Assets:Clearing:WX:CC:CMB",
+        tx_type="expense",
+        counter_account="Assets:Clearing:JD:WX",
+        metadata={"link": "clearing-abcd1234"},
+    )
+    combined = _init_and_write(tmp_path, [tx])
+    _, errors, _ = load_string(combined)
+    assert errors == [], f"Beancount validation errors: {errors}"
+    assert "^clearing-abcd1234" in combined
+
+
+def test_clearing_chain_validates(tmp_path):
+    """Full clearing chain: JD Orders -> JD CSV -> WeChat, all balancing."""
+    # JD Orders: Clearing:JD -> Expenses (multi-posting with items)
+    jd_order = Transaction(
+        date=datetime(2024, 1, 15),
+        source_account="Assets:Clearing:JD",
+        amount=Decimal("-149.00"),
+        currency="CNY",
+        payee="京东平台商户",
+        narration="蓝牙耳机",
+        tx_type="expense",
+        metadata={
+            "jd_items": [
+                {
+                    "name": "蓝牙耳机",
+                    "num": 1,
+                    "price": "149.00",
+                    "category": "Expenses:Shopping:Electronics",
+                },
+            ],
+        },
+    )
+    # JD CSV bridge: Clearing:JD:WX -> Clearing:JD
+    jd_bridge = Transaction(
+        date=datetime(2024, 1, 15),
+        source_account="Assets:Clearing:JD:WX",
+        amount=Decimal("-149.00"),
+        currency="CNY",
+        payee="京东平台商户",
+        narration="蓝牙耳机",
+        tx_type="expense",
+        counter_account="Assets:Clearing:JD",
+    )
+    # WeChat: Clearing:WX:CC:CMB -> Clearing:JD:WX
+    wechat = Transaction(
+        date=datetime(2024, 1, 15),
+        source_account="Assets:Clearing:WX:CC:CMB",
+        amount=Decimal("-149.00"),
+        currency="CNY",
+        payee="京东",
+        narration="京东购物",
+        tx_type="expense",
+        counter_account="Assets:Clearing:JD:WX",
+    )
+
+    combined = _init_and_write(tmp_path, [jd_order, jd_bridge, wechat])
+    _, errors, _ = load_string(combined)
+    assert errors == [], f"Beancount validation errors: {errors}"

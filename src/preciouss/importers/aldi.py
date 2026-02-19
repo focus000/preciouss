@@ -86,7 +86,7 @@ class AldiImporter(PrecioussImporter):
     - orderStatusName: "已完成" for completed orders
     """
 
-    def __init__(self, account: str = "Assets:Unknown", currency: str = "CNY"):
+    def __init__(self, account: str = "Assets:Clearing:ALDI", currency: str = "CNY"):
         self._account = account
         self._currency = currency
         self._item_categorizer = AldiItemCategorizer()
