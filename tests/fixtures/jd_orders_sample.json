@@ -1,0 +1,91 @@
+{
+  "orders": [
+    {
+      "order_id": "M20240110001",
+      "parent_order_id": null,
+      "status": "已完成",
+      "amount": 38.68,
+      "pay_time": "2024-01-10 09:30:00",
+      "goods_total": {
+        "商品总价": 38.68,
+        "实付款": 38.68
+      },
+      "items": [
+        {"name": "小米空气净化器滤芯", "quantity": 1, "price": 38.68}
+      ]
+    },
+    {
+      "order_id": "M20240120001",
+      "parent_order_id": null,
+      "status": "已完成",
+      "amount": 189.00,
+      "pay_time": "2024-01-20 16:30:00",
+      "goods_total": {
+        "商品总价": 299.00,
+        "礼品卡和领货码": -110.00,
+        "实付款": 189.00
+      },
+      "items": [
+        {"name": "运动T恤", "quantity": 2, "price": 149.50}
+      ]
+    },
+    {
+      "order_id": "GC20240201001",
+      "parent_order_id": null,
+      "status": "已完成",
+      "amount": 0,
+      "pay_time": "2024-02-01 10:00:00",
+      "goods_total": {
+        "商品总价": 59.0,
+        "礼品卡和领货码": -53.10,
+        "实付款": 0
+      },
+      "items": [
+        {"name": "松下毛球修剪器", "quantity": 1, "price": 59.0},
+        {"name": "赠品贴纸", "quantity": 1, "price": 0}
+      ]
+    },
+    {
+      "order_id": "CANCELLED001",
+      "parent_order_id": null,
+      "status": "已取消",
+      "amount": 100.0,
+      "pay_time": "2024-01-05 12:00:00",
+      "goods_total": {
+        "商品总价": 100.0,
+        "实付款": 100.0
+      },
+      "items": [
+        {"name": "某商品", "quantity": 1, "price": 100.0}
+      ]
+    },
+    {
+      "order_id": "CHILD001",
+      "parent_order_id": "PARENT001",
+      "status": "已完成",
+      "amount": 20.0,
+      "pay_time": "2024-01-25 10:00:00",
+      "goods_total": {
+        "商品总价": 20.0,
+        "实付款": 20.0
+      },
+      "items": [
+        {"name": "子订单商品A", "quantity": 1, "price": 20.0}
+      ]
+    },
+    {
+      "order_id": "CHILD002",
+      "parent_order_id": "PARENT001",
+      "status": "已完成",
+      "amount": 30.0,
+      "pay_time": "2024-01-25 10:05:00",
+      "goods_total": {
+        "商品总价": 30.0,
+        "实付款": 30.0
+      },
+      "items": [
+        {"name": "子订单商品B", "quantity": 1, "price": 30.0}
+      ]
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-"""WeChat Pay (微信支付) CSV importer."""
+"""WeChat Pay (微信支付) CSV/XLSX importer."""
 
 from __future__ import annotations
 
@@ -9,12 +9,13 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from preciouss.importers.base import CsvImporter, Transaction
+from preciouss.importers.resolve import resolve_payment_account
 
 
 class WechatImporter(CsvImporter):
-    """Import transactions from WeChat Pay CSV exports.
+    """Import transactions from WeChat Pay CSV or XLSX exports.
 
-    WeChat Pay CSV format (after ~16 metadata lines):
+    WeChat Pay format (after metadata lines):
     交易时间, 交易类型, 交易对方, 商品, 收/支, 金额(元), 支付方式, 当前状态,
     交易单号, 商户单号, 备注
 
@@ -22,6 +23,7 @@ class WechatImporter(CsvImporter):
     - Amounts have ¥ prefix
     - 交易单号 and 商户单号 may have trailing tabs
     - 支付方式 contains bank card info like "招商银行(0913)"
+    - Supports both .csv and .xlsx files (same column structure)
     """
 
     expected_headers = ["微信支付账单明细"]
@@ -35,8 +37,25 @@ class WechatImporter(CsvImporter):
 
     def identify(self, filepath) -> bool:
         filepath = Path(filepath)
-        if filepath.suffix.lower() != ".csv":
-            return False
+        suffix = filepath.suffix.lower()
+        if suffix == ".csv":
+            return self._identify_csv(filepath)
+        elif suffix == ".xlsx":
+            return self._identify_xlsx(filepath)
+        return False
+
+    def extract(self, filepath) -> list[Transaction]:
+        filepath = Path(filepath)
+        suffix = filepath.suffix.lower()
+        if suffix == ".csv":
+            return self._extract_csv(filepath)
+        elif suffix == ".xlsx":
+            return self._extract_xlsx(filepath)
+        return []
+
+    # --- CSV methods ---
+
+    def _identify_csv(self, filepath: Path) -> bool:
         try:
             content = self._read_file(filepath)
             first_line = content.split("\n")[0]
@@ -44,9 +63,8 @@ class WechatImporter(CsvImporter):
         except Exception:
             return False
 
-    def extract(self, filepath) -> list[Transaction]:
-        """Override extract to find the actual CSV header dynamically."""
-        filepath = Path(filepath)
+    def _extract_csv(self, filepath: Path) -> list[Transaction]:
+        """Extract transactions from CSV, finding header dynamically."""
         content = self._read_file(filepath)
         lines = content.split("\n")
 
@@ -72,6 +90,64 @@ class WechatImporter(CsvImporter):
                 transactions.append(tx)
 
         return transactions
+
+    # --- XLSX methods ---
+
+    def _identify_xlsx(self, filepath: Path) -> bool:
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            return False
+
+        try:
+            wb = load_workbook(filepath, read_only=True, data_only=True)
+            ws = wb.active
+            # Check first row first cell for "微信支付"
+            for row in ws.iter_rows(max_row=1, max_col=1, values_only=True):
+                val = str(row[0]) if row[0] is not None else ""
+                wb.close()
+                return "微信支付" in val
+            wb.close()
+            return False
+        except Exception:
+            return False
+
+    def _extract_xlsx(self, filepath: Path) -> list[Transaction]:
+        try:
+            from openpyxl import load_workbook
+        except ImportError as e:
+            raise ImportError(
+                "openpyxl is required for xlsx support. Install it with: uv add openpyxl"
+            ) from e
+
+        wb = load_workbook(filepath, read_only=True, data_only=True)
+        ws = wb.active
+
+        headers = None
+        transactions = []
+
+        for row in ws.iter_rows(values_only=True):
+            # Convert all cells to strings
+            cells = [str(c).strip() if c is not None else "" for c in row]
+
+            # Find header row
+            if headers is None:
+                if cells and cells[0] == "交易时间":
+                    headers = cells
+                continue
+
+            # Build dict from row using headers
+            if len(cells) < len(headers):
+                continue
+            row_dict = {headers[i]: cells[i] for i in range(len(headers))}
+            tx = self._parse_row(row_dict)
+            if tx is not None:
+                transactions.append(tx)
+
+        wb.close()
+        return transactions
+
+    # --- Shared parsing ---
 
     def _parse_row(self, row: dict[str, str]) -> Transaction | None:
         # Parse date
@@ -117,13 +193,19 @@ class WechatImporter(CsvImporter):
         merchant_no = row.get("商户单号", "").strip().strip("\t")
         tx_type_raw = row.get("交易类型", "").strip()
 
+        # Resolve payment account
+        if payment_method and payment_method != "/":
+            resolved_account = resolve_payment_account(payment_method, f"{self._account}:Unknown")
+        else:
+            resolved_account = self._account
+
         return Transaction(
             date=date,
             amount=amount,
             currency=self._currency,
             payee=payee,
             narration=narration,
-            source_account=self._account,
+            source_account=resolved_account,
             payment_method=payment_method if payment_method and payment_method != "/" else None,
             reference_id=trade_no if trade_no and trade_no != "/" else None,
             counterpart_ref=merchant_no if merchant_no and merchant_no != "/" else None,

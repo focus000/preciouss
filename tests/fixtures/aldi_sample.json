@@ -1,0 +1,69 @@
+{
+  "totalOrders": 3,
+  "totalAmount": 293.8,
+  "orders": [
+    {
+      "orderCode": "260118463558598993",
+      "date": "2026-01-18",
+      "time": "11:10",
+      "store": "ALDI奥乐齐(苏州环宇荟店)",
+      "channel": "线上",
+      "paymentAmount": 85.7,
+      "productAmount": 84.8,
+      "memberDiscount": 0.0,
+      "promotionAmount": 0.0,
+      "deliveryFee": 0.0,
+      "products": [
+        {"name": "有机开口大板栗 一份", "num": 1, "price": 17.9},
+        {"name": "寻露 生榨厚椰汁 1升", "num": 1, "price": 9.9},
+        {"name": "悠白零乳糖牛奶450毫升*2", "num": 1, "price": 14.9},
+        {"name": "ALDI HOME 75%酒精卫生湿巾 80片", "num": 1, "price": 9.9},
+        {"name": "超值卫生湿巾 80片", "num": 1, "price": 6.9},
+        {"name": "寻露饮用纯净水 4 升", "num": 1, "price": 5.9},
+        {"name": "奥小辣烤鸡腿", "num": 1, "price": 9.9},
+        {"name": "安格斯芝士牛肉卷", "num": 1, "price": 9.5}
+      ],
+      "orderStatusName": "已完成"
+    },
+    {
+      "orderCode": "260112319091852993",
+      "date": "2026-01-12",
+      "time": "21:47",
+      "store": "ALDI奥乐齐(长宁缤谷店)",
+      "channel": "门店",
+      "paymentAmount": 46.1,
+      "productAmount": 46.1,
+      "memberDiscount": 0.0,
+      "promotionAmount": 0.0,
+      "deliveryFee": 0.0,
+      "products": [
+        {"name": "有机4.0厚酸奶400克", "num": 1, "price": 10.9},
+        {"name": "悠白马苏里拉干酪碎200g", "num": 1, "price": 19.9},
+        {"name": "超值 鲜牛奶 950 毫升", "num": 1, "price": 7.5},
+        {"name": "悠白 原味豆浆 250ml", "num": 1, "price": 1.9},
+        {"name": "超值 清新护齿牙膏 150g", "num": 1, "price": 5.9}
+      ],
+      "orderStatusName": "已完成"
+    },
+    {
+      "orderCode": "251208871732177993",
+      "date": "2025-12-08",
+      "time": "19:00",
+      "store": "ALDI奥乐齐(长宁缤谷店)",
+      "channel": "门店",
+      "paymentAmount": 48.3,
+      "productAmount": 58.2,
+      "memberDiscount": 0.0,
+      "promotionAmount": 9.9,
+      "deliveryFee": 0.0,
+      "products": [
+        {"name": "LACURA 檀香木护手霜 75g", "num": 1, "price": 14.9},
+        {"name": "LACURA 橄榄护唇膏 1.5g", "num": 1, "price": 12.9},
+        {"name": "LACURA 抑菌洗手液 350ml", "num": 1, "price": 9.9},
+        {"name": "好生活 原味吸吸酸奶100克", "num": 1, "price": 5.9},
+        {"name": "超值 去根香菇 300g", "num": 1, "price": 4.7}
+      ],
+      "orderStatusName": "已完成"
+    }
+  ]
+}
