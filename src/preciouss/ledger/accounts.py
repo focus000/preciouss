@@ -36,6 +36,16 @@ DEFAULT_ACCOUNTS = {
     "Assets:WeChat:Unknown": "微信未识别付款方式",
     "Assets:Alipay:Unknown": "支付宝未识别付款方式",
     "Assets:JD:Unknown": "京东未识别付款方式",
+    # Clearing accounts (cross-platform bridges)
+    "Assets:Clearing:Costco": "Costco清算",
+    "Assets:Clearing:ALDI": "ALDI清算",
+    "Assets:Clearing:JD": "京东清算",
+    "Assets:Clearing:JD:WX": "京东清算-微信",
+    "Assets:Clearing:JD:Alipay": "京东清算-支付宝",
+    "Assets:Clearing:JD:ApplePay": "京东清算-ApplePay",
+    "Assets:Clearing:JD:Unknown": "京东清算-未知",
+    "Assets:Clearing:WX:Unknown": "微信清算-未知",
+    "Assets:Clearing:Alipay:Unknown": "支付宝清算-未知",
     # Liabilities
     "Liabilities:CreditCard:CMB": "招商银行信用卡",
     "Liabilities:CreditCard:ICBC": "工商银行信用卡",
@@ -85,8 +95,10 @@ DEFAULT_ACCOUNTS = {
     "Expenses:Finance:Interest": "利息支出",
     "Expenses:Finance:Insurance": "保险",
     "Expenses:Uncategorized": "未分类支出",
+    "Expenses:Transfer": "转账支出",
     # Income
     "Income:Uncategorized": "未分类收入",
+    "Income:Transfer": "转账收入",
     "Income:Salary": "工资",
     "Income:Bonus": "奖金",
     "Income:Investment": "投资收益",
@@ -95,6 +107,21 @@ DEFAULT_ACCOUNTS = {
     # Equity
     "Equity:Opening-Balances": "期初余额",
 }
+
+# Bank-specific clearing accounts are generated dynamically
+# for each platform × card type × bank combination
+_CLEARING_PLATFORMS = ["WX", "Alipay", "JD"]
+_CLEARING_CARD_TYPES = {"CC": "信用卡", "Bank": "储蓄卡"}
+_CLEARING_BANKS = [
+    "CMB", "ICBC", "CCB", "BOC", "CITIC", "ABC", "COMM",
+    "SPDB", "CIB", "CMBC", "CEB", "PAB", "GDB", "PSBC", "HSBC",
+]
+
+for _platform in _CLEARING_PLATFORMS:
+    for _card_type, _card_desc in _CLEARING_CARD_TYPES.items():
+        for _bank in _CLEARING_BANKS:
+            _acct = f"Assets:Clearing:{_platform}:{_card_type}:{_bank}"
+            DEFAULT_ACCOUNTS[_acct] = f"{_platform}清算-{_card_desc}-{_bank}"
 
 # Default currencies
 DEFAULT_CURRENCIES = ["CNY", "HKD", "USD", "EUR", "GBP", "JPY"]

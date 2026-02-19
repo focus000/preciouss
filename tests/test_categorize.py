@@ -7,7 +7,9 @@ from preciouss.categorize.rules import RuleCategorizer
 from preciouss.importers.base import Transaction
 
 
-def _make_tx(payee: str, narration: str = "", raw_category: str = "") -> Transaction:
+def _make_tx(
+    payee: str, narration: str = "", raw_category: str = "", tx_type: str | None = None
+) -> Transaction:
     return Transaction(
         date=datetime(2024, 1, 15),
         amount=Decimal("-35.00"),
@@ -16,6 +18,7 @@ def _make_tx(payee: str, narration: str = "", raw_category: str = "") -> Transac
         narration=narration,
         source_account="Assets:Alipay",
         raw_category=raw_category,
+        tx_type=tx_type,
     )
 
 
@@ -122,3 +125,34 @@ def test_mobile_payment_not_telecom():
     categorizer = RuleCategorizer()
     result = categorizer.categorize(_make_tx("中国银行移动支付平台"))
     assert result != "Expenses:Housing:Utilities"
+
+
+# --- Transfer direction ---
+
+
+def test_transfer_expense():
+    """转账 expense goes to Expenses:Transfer."""
+    categorizer = RuleCategorizer()
+    tx = _make_tx("张三", "转账", "转账", tx_type="expense")
+    assert categorizer.categorize(tx) == "Expenses:Transfer"
+
+
+def test_transfer_income():
+    """转账 income goes to Income:Transfer."""
+    categorizer = RuleCategorizer()
+    tx = _make_tx("张三", "转账", "转账", tx_type="income")
+    assert categorizer.categorize(tx) == "Income:Transfer"
+
+
+def test_group_collection_expense():
+    """群收款 expense goes to Expenses:Transfer."""
+    categorizer = RuleCategorizer()
+    tx = _make_tx("李四", "群收款", "群收款", tx_type="expense")
+    assert categorizer.categorize(tx) == "Expenses:Transfer"
+
+
+def test_group_collection_income():
+    """群收款 income goes to Income:Transfer."""
+    categorizer = RuleCategorizer()
+    tx = _make_tx("李四", "群收款", "群收款", tx_type="income")
+    assert categorizer.categorize(tx) == "Income:Transfer"

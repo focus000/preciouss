@@ -242,7 +242,7 @@ DEFAULT_REGEX_RULES: list[tuple[str, str]] = [
     (r"利息.*收入", "Income:Interest"),
     (r"红包", "Income:Uncategorized"),
     (r"信用卡还款", "Expenses:Finance:Fees"),
-    (r"转账", "Expenses:Uncategorized"),
+    (r"转账|群收款", "Expenses:Transfer"),
 ]
 
 
@@ -263,6 +263,13 @@ class RuleCategorizer:
         if regex_rules:
             self.regex_rules = regex_rules + self.regex_rules
 
+    @staticmethod
+    def _direction_account(category: str, tx_type: str | None) -> str:
+        """Flip Expenses:Transfer → Income:Transfer for income transactions."""
+        if tx_type == "income" and category == "Expenses:Transfer":
+            return "Income:Transfer"
+        return category
+
     def categorize(self, tx: Transaction) -> str | None:
         """Try to categorize a transaction. Returns account name or None."""
         text = f"{tx.payee} {tx.narration}".lower()
@@ -272,11 +279,11 @@ class RuleCategorizer:
         # Try keyword matching first (exact substring)
         for keyword, category in self.keyword_rules.items():
             if keyword.lower() in text:
-                return category
+                return self._direction_account(category, tx.tx_type)
 
         # Try regex matching
         for pattern, category in self.regex_rules:
             if re.search(pattern, text, re.IGNORECASE):
-                return category
+                return self._direction_account(category, tx.tx_type)
 
         return None

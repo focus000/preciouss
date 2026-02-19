@@ -96,6 +96,19 @@ preciouss import --year 2020:2026 alipay_all.csv
 
 语义：`--year START:END` 保留满足 `START-01-01 ≤ 交易日期 < END-01-01` 的交易，即包含 START 年、不包含 END 年。
 
+## 分类规则
+
+内置规则覆盖常见商户、品牌和交易类型，自动映射到 Beancount 账户。部分规则感知收支方向：
+
+| 交易描述 | 支出 (expense) | 收入 (income) |
+|----------|---------------|--------------|
+| 转账 | `Expenses:Transfer` | `Income:Transfer` |
+| 群收款 | `Expenses:Transfer` | `Income:Transfer` |
+| 工资/薪资 | — | `Income:Salary` |
+| 退款/退货 | — | `Income:Refund` |
+
+可在 `config.toml` 中通过 `[categorize.keyword_rules]` 添加自定义关键词规则（优先级高于内置规则）。
+
 ## 配置
 
 复制示例配置文件并修改：
