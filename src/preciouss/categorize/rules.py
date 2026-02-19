@@ -9,6 +9,29 @@ from preciouss.importers.base import Transaction
 # Default keyword-to-category mapping
 # More specific keywords should come before generic ones
 DEFAULT_RULES: dict[str, str] = {
+    # JD platform categories (raw_category matching)
+    "数码电器": "Expenses:Shopping:Electronics",
+    "手机通讯": "Expenses:Shopping:Electronics",
+    "电脑办公": "Expenses:Shopping:Electronics",
+    "家用电器": "Expenses:Shopping:Electronics",
+    "美妆个护": "Expenses:Shopping:DailyGoods",
+    "清洁纸品": "Expenses:Shopping:DailyGoods",
+    "日用百货": "Expenses:Shopping:DailyGoods",
+    "鞋服箱包": "Expenses:Shopping:Clothing",
+    "食品酒饮": "Expenses:Food:Grocery",
+    "家居家装": "Expenses:Shopping:HomeGoods",
+    "图书文娱": "Expenses:Education:Books",
+    "教育培训": "Expenses:Education:Courses",
+    "运动户外": "Expenses:Health:Fitness",
+    "医疗保健": "Expenses:Health:Medical",
+    "生活服务": "Expenses:Shopping:DailyGoods",
+    "12306": "Expenses:Transport:PublicTransit",
+    # Huawei campus specific (MUST be before any generic "华为" rule)
+    "华为一卡通": "Expenses:Food:Restaurant",
+    "捷华餐饮": "Expenses:Food:Restaurant",
+    "农耕记": "Expenses:Food:Restaurant",
+    "三牦记": "Expenses:Food:Restaurant",
+    "食堂": "Expenses:Food:Restaurant",
     # Coffee
     "星巴克": "Expenses:Food:Coffee",
     "starbucks": "Expenses:Food:Coffee",
@@ -128,7 +151,6 @@ DEFAULT_RULES: dict[str, str] = {
     "muji": "Expenses:Shopping:DailyGoods",
     # Shopping - electronics
     "小米": "Expenses:Shopping:Electronics",
-    "华为": "Expenses:Shopping:Electronics",
     # Shopping - online
     "京东": "Expenses:Shopping:DailyGoods",
     "淘宝": "Expenses:Shopping:DailyGoods",
@@ -165,10 +187,18 @@ DEFAULT_RULES: dict[str, str] = {
     "燃气": "Expenses:Housing:Utilities",
     "生活缴费": "Expenses:Housing:Utilities",
     # Health
+    "门诊部": "Expenses:Health:Medical",
+    "门诊": "Expenses:Health:Medical",
+    "诊中支付": "Expenses:Health:Medical",
     "医院": "Expenses:Health:Medical",
     "药房": "Expenses:Health:Medicine",
     "药店": "Expenses:Health:Medicine",
     "宠物医院": "Expenses:Health:Medical",
+    "游泳池": "Expenses:Health:Fitness",
+    "游泳": "Expenses:Health:Fitness",
+    "健身房": "Expenses:Health:Fitness",
+    "健身": "Expenses:Health:Fitness",
+    "捷安特": "Expenses:Health:Fitness",
     # Education
     "书店": "Expenses:Education:Books",
     "图书": "Expenses:Education:Books",
@@ -187,14 +217,17 @@ DEFAULT_RULES: dict[str, str] = {
     # Telecom
     "联通": "Expenses:Housing:Utilities",
     "电信": "Expenses:Housing:Utilities",
-    "移动": "Expenses:Housing:Utilities",
+    "中国移动": "Expenses:Housing:Utilities",
     "手机充值": "Expenses:Housing:Utilities",
-    # Charging stations/power bank
-    "充电": "Expenses:Transport:Gas",
+    "尊享年包套餐": "Expenses:Housing:Utilities",
+    # Charging - power bank (MUST be before generic "充电")
     "来电科技": "Expenses:Shopping:DailyGoods",
     "街电": "Expenses:Shopping:DailyGoods",
     "小电": "Expenses:Shopping:DailyGoods",
     "怪兽充电": "Expenses:Shopping:DailyGoods",
+    "充电宝": "Expenses:Shopping:DailyGoods",
+    # EV/scooter charging (generic, after brands)
+    "充电": "Expenses:Transport:Gas",
     # Government
     "出入境": "Expenses:Finance:Fees",
     "身份证": "Expenses:Finance:Fees",
@@ -233,6 +266,8 @@ class RuleCategorizer:
     def categorize(self, tx: Transaction) -> str | None:
         """Try to categorize a transaction. Returns account name or None."""
         text = f"{tx.payee} {tx.narration}".lower()
+        if tx.raw_category:
+            text += f" {tx.raw_category}".lower()
 
         # Try keyword matching first (exact substring)
         for keyword, category in self.keyword_rules.items():

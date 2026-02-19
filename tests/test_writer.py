@@ -3,6 +3,8 @@
 from datetime import datetime
 from decimal import Decimal
 
+from beancount.loader import load_string
+
 from preciouss.importers.base import Transaction
 from preciouss.ledger.writer import init_ledger, transaction_to_bean, write_transactions
 
@@ -95,3 +97,105 @@ def test_init_ledger_idempotent(tmp_path):
     # Re-init should not overwrite
     init_ledger(ledger_dir)
     assert "; custom line" in main_path.read_text()
+
+
+def _init_and_write(tmp_path, transactions):
+    """Helper: init ledger, write transactions, return combined bean string."""
+    ledger_dir = tmp_path / "ledger"
+    init_ledger(ledger_dir)
+    write_transactions(transactions, ledger_dir / "importers" / "test.bean")
+
+    # Combine all files like beancount would via includes
+    parts = []
+    for name in ["main.bean", "commodities.bean", "accounts.bean"]:
+        parts.append((ledger_dir / name).read_text(encoding="utf-8"))
+    parts.append((ledger_dir / "importers" / "test.bean").read_text(encoding="utf-8"))
+
+    # Remove include directives (we inline everything)
+    combined = "\n".join(parts)
+    combined = "\n".join(line for line in combined.splitlines() if not line.startswith("include "))
+    return combined
+
+
+def test_ledger_validates_cny_transactions(tmp_path):
+    """Generated ledger with CNY transactions passes beancount validation."""
+    txns = [
+        Transaction(
+            date=datetime(2024, 1, 15),
+            amount=Decimal("-35.00"),
+            currency="CNY",
+            payee="星巴克",
+            narration="咖啡",
+            source_account="Assets:Alipay",
+            tx_type="expense",
+        ),
+    ]
+    combined = _init_and_write(tmp_path, txns)
+    _, errors, _ = load_string(combined)
+    assert errors == [], f"Beancount validation errors: {errors}"
+
+
+def test_ledger_validates_hkd_transactions(tmp_path):
+    """Generated ledger with HKD transactions passes beancount validation."""
+    txns = [
+        Transaction(
+            date=datetime(2024, 3, 10),
+            amount=Decimal("-88.00"),
+            currency="HKD",
+            payee="大家乐",
+            narration="午餐",
+            source_account="Assets:WeChatHK",
+            tx_type="expense",
+        ),
+    ]
+    combined = _init_and_write(tmp_path, txns)
+    _, errors, _ = load_string(combined)
+    assert errors == [], f"Beancount validation errors: {errors}"
+
+
+def test_ledger_validates_multi_currency_mixed(tmp_path):
+    """Same expense account with CNY + HKD transactions passes validation."""
+    txns = [
+        Transaction(
+            date=datetime(2024, 1, 15),
+            amount=Decimal("-35.00"),
+            currency="CNY",
+            payee="星巴克",
+            narration="咖啡",
+            source_account="Assets:Alipay",
+            tx_type="expense",
+        ),
+        Transaction(
+            date=datetime(2024, 3, 10),
+            amount=Decimal("-88.00"),
+            currency="HKD",
+            payee="大家乐",
+            narration="午餐",
+            source_account="Assets:WeChatHK",
+            tx_type="expense",
+        ),
+    ]
+    combined = _init_and_write(tmp_path, txns)
+    _, errors, _ = load_string(combined)
+    assert errors == [], f"Beancount validation errors: {errors}"
+
+
+def test_transfer_account_metadata(tmp_path):
+    """Transactions with transfer_account metadata use it as counter account."""
+    txns = [
+        Transaction(
+            date=datetime(2024, 1, 15),
+            amount=Decimal("-500.00"),
+            currency="CNY",
+            payee="京东白条",
+            narration="白条还款-1月",
+            source_account="Assets:Bank:CMB",
+            tx_type="transfer",
+            metadata={"transfer_account": "Liabilities:JD:BaiTiao"},
+        ),
+    ]
+    combined = _init_and_write(tmp_path, txns)
+    _, errors, _ = load_string(combined)
+    assert errors == [], f"Beancount validation errors: {errors}"
+    assert "Liabilities:JD:BaiTiao" in combined
+    assert "Assets:Bank:CMB" in combined

@@ -19,6 +19,9 @@ class AccountConfig(BaseModel):
     currency: str = "CNY"
     identifier: str | None = None  # e.g. 尾号1234, used for matching payment methods
 
+    # Supplementary data files (optional)
+    orders_file: str | None = None  # order detail JSON (used by JD)
+
     # API credentials (optional, for API-based importers)
     flex_token: str | None = None
     flex_query_id: str | None = None
