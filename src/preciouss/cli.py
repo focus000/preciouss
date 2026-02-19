@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -382,15 +383,45 @@ def _merge_aldi_with_payments(
                     matched = True
 
 
+def _parse_year_range(year_str: str) -> tuple[datetime, datetime]:
+    """Parse 'START:END' year range string into a half-open [from, until) datetime interval.
+
+    '2020:2026' → (datetime(2020,1,1), datetime(2026,1,1))
+    Transactions are kept if: date_from <= tx.date < date_until.
+    """
+    parts = year_str.split(":")
+    if len(parts) != 2:
+        raise click.BadParameter(f"Expected 'START:END', got '{year_str}'", param_hint="'--year'")
+    try:
+        start, end = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise click.BadParameter(f"Years must be integers, got '{year_str}'", param_hint="'--year'")
+    if start >= end:
+        raise click.BadParameter(
+            f"Start year must be less than end year, got '{year_str}'", param_hint="'--year'"
+        )
+    return datetime(start, 1, 1), datetime(end, 1, 1)
+
+
 @main.command(name="import")
 @click.argument("files", nargs=-1, type=click.Path(exists=True))
 @click.option("--source", "-s", default=None, help="Force a specific importer (e.g. alipay, cmb)")
 @click.option(
     "--reinit", is_flag=True, default=False, help="Delete and reinitialize ledger before importing"
 )
+@click.option(
+    "--year",
+    "year_range",
+    default=None,
+    help="Only import transactions in this year range, e.g. '2020:2026' keeps 2020–2025.",
+)
 @click.pass_context
 def import_cmd(
-    ctx: click.Context, files: tuple[str, ...], source: str | None, reinit: bool
+    ctx: click.Context,
+    files: tuple[str, ...],
+    source: str | None,
+    reinit: bool,
+    year_range: str | None,
 ) -> None:
     """Import transaction files (auto-detects platform)."""
     from preciouss.categorize.rules import RuleCategorizer
@@ -407,6 +438,14 @@ def import_cmd(
             click.echo(f"Deleted ledger directory: {ledger_dir}")
         init_ledger(ledger_dir, config.general.default_currency)
         click.echo(f"Reinitialized ledger in: {ledger_dir}")
+
+    date_filter: tuple[datetime, datetime] | None = None
+    if year_range:
+        date_filter = _parse_year_range(year_range)
+        date_from, date_until = date_filter
+        click.echo(
+            f"Date filter: {date_from.year}-01-01 to {date_until.year - 1}-12-31 (inclusive)"
+        )
 
     if not files:
         click.echo("Error: no files specified. Usage: preciouss import <file|dir>...", err=True)
@@ -454,6 +493,7 @@ def import_cmd(
     total_imported = 0
     total_categorized = 0
     total_deduped = 0
+    total_filtered = 0
     all_txns_by_importer: dict[int, list[Transaction]] = {}
 
     for imp_id, file_list in importer_files.items():
@@ -479,6 +519,15 @@ def import_cmd(
 
         if n_dupes > 0:
             click.echo(f"  Deduplicated: {before_count} → {len(all_txns)} ({n_dupes} duplicates)")
+
+        if date_filter is not None:
+            date_from, date_until = date_filter
+            before = len(all_txns)
+            all_txns = [tx for tx in all_txns if date_from <= tx.date < date_until]
+            n_filtered = before - len(all_txns)
+            total_filtered += n_filtered
+            if n_filtered > 0:
+                click.echo(f"  Date filter: removed {n_filtered} out-of-range transactions")
 
         all_txns_by_importer[imp_id] = all_txns
 
@@ -514,6 +563,8 @@ def import_cmd(
     click.echo(f"\nTotal: {total_imported} transactions imported.")
     if total_deduped > 0:
         click.echo(f"  Deduplicated: {total_deduped} duplicates removed")
+    if total_filtered > 0:
+        click.echo(f"  Filtered (out of date range): {total_filtered}")
     click.echo(f"  Categorized: {total_categorized}")
     click.echo(f"  Uncategorized: {n_uncat}")
 

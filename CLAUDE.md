@@ -61,7 +61,8 @@ uv run ruff format src/         # 格式化
 uv run mypy src/preciouss/      # 类型检查
 uv run preciouss --help         # CLI 帮助
 uv run preciouss init           # 初始化账本
-uv run preciouss import <file>  # 导入账单
+uv run preciouss import <file>              # 导入账单
+uv run preciouss import --year 2024:2025 <file>  # 只导入 2024 年
 uv run preciouss status         # 查看状态
 uv run preciouss fava           # 启动 Fava
 ```

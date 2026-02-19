@@ -56,6 +56,34 @@ def test_cli_status(tmp_path):
     assert result.exit_code == 0
 
 
+def test_cli_import_year_includes_all(tmp_path, monkeypatch):
+    """--year with a very wide range should import all transactions normally."""
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(main, ["init"])
+    result = runner.invoke(
+        main,
+        ["import", "--year", "2000:2030", str(FIXTURES / "alipay_sample.csv")],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "Date filter" in result.output
+
+
+def test_cli_import_year_excludes_all(tmp_path, monkeypatch):
+    """--year with a range that excludes all transactions should report 0 imported."""
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(main, ["init"])
+    result = runner.invoke(
+        main,
+        ["import", "--year", "2030:2040", str(FIXTURES / "alipay_sample.csv")],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "0 transactions imported" in result.output or "Total: 0" in result.output
+
+
 def test_cli_import_reinit(tmp_path, monkeypatch):
     """--reinit deletes old ledger and reinitializes before importing."""
     runner = CliRunner()

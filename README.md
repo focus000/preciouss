@@ -70,14 +70,30 @@ uv run preciouss fava
 ## CLI 命令
 
 ```
-preciouss init                    # 初始化账本目录和默认文件
-preciouss import <file>...        # 导入账单文件（自动识别平台）
-preciouss import --source alipay  # 指定平台导入
-preciouss match                   # 运行跨平台交易匹配
-preciouss categorize              # 运行智能分类
-preciouss status                  # 查看导入状态和统计
-preciouss fava                    # 启动 Fava Web UI
+preciouss init                          # 初始化账本目录和默认文件
+preciouss import <file>...              # 导入账单文件（自动识别平台）
+preciouss import --source alipay        # 指定平台导入
+preciouss import --year 2024:2025       # 只导入 2024 年的交易
+preciouss import --year 2020:2026       # 只导入 2020–2025 年的交易
+preciouss match                         # 运行跨平台交易匹配
+preciouss categorize                    # 运行智能分类
+preciouss status                        # 查看导入状态和统计
+preciouss fava                          # 启动 Fava Web UI
 ```
+
+### `--year` 日期范围过滤
+
+当账单文件跨多年，但只需导入特定年份时使用：
+
+```bash
+# 只导入 2024 年（2024-01-01 到 2024-12-31）
+preciouss import --year 2024:2025 alipay_all.csv
+
+# 导入 2020–2025 年（2026-01-01 之前的所有交易）
+preciouss import --year 2020:2026 alipay_all.csv
+```
+
+语义：`--year START:END` 保留满足 `START-01-01 ≤ 交易日期 < END-01-01` 的交易，即包含 START 年、不包含 END 年。
 
 ## 配置
 
