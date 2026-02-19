@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 import re
 from datetime import datetime
@@ -155,6 +153,7 @@ class JdImporter(CsvImporter):
 
     skip_lines = 21
     expected_headers = ["京东账号名"]
+    tab_delimited = True
 
     def __init__(
         self,
@@ -182,29 +181,11 @@ class JdImporter(CsvImporter):
             return False
 
     def extract(self, filepath) -> list[Transaction]:
-        """Override extract to handle JD's tab characters (similar to Alipay)."""
-        filepath = Path(filepath)
-        content = self._read_file(filepath)
-
-        lines = content.split("\n")
-        csv_lines = lines[self.skip_lines :]
-
-        # Clean up tab characters
-        cleaned = []
-        for line in csv_lines:
-            cleaned.append(line.replace("\t,", ",").replace("\t", ""))
-        csv_content = "\n".join(cleaned)
-
-        reader = csv.DictReader(io.StringIO(csv_content))
-        transactions = []
-        for row in reader:
-            row = {k.strip(): v.strip() if v else "" for k, v in row.items() if k}
-            tx = self._parse_row(row)
-            if tx is not None:
-                if self._orders and tx.tx_type != "transfer":
+        transactions = super().extract(filepath)
+        if self._orders:
+            for tx in transactions:
+                if tx.tx_type != "transfer":
                     _enrich_with_orders(tx, self._orders)
-                transactions.append(tx)
-
         return transactions
 
     def _parse_row(self, row: dict[str, str]) -> Transaction | None:
@@ -238,10 +219,7 @@ class JdImporter(CsvImporter):
         raw_category = row.get("交易分类", "").strip()
 
         # Resolve payment account
-        if payment_method and payment_method != "/":
-            source_account = resolve_payment_account(payment_method, f"{self._account}:Unknown")
-        else:
-            source_account = self._account
+        source_account = self._resolve_payment(payment_method)
 
         if direction == "支出":
             if refund is not None:

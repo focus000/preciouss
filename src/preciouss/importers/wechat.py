@@ -9,7 +9,6 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from preciouss.importers.base import CsvImporter, Transaction
-from preciouss.importers.resolve import resolve_payment_account
 
 
 class WechatImporter(CsvImporter):
@@ -194,10 +193,7 @@ class WechatImporter(CsvImporter):
         tx_type_raw = row.get("交易类型", "").strip()
 
         # Resolve payment account
-        if payment_method and payment_method != "/":
-            resolved_account = resolve_payment_account(payment_method, f"{self._account}:Unknown")
-        else:
-            resolved_account = self._account
+        resolved_account = self._resolve_payment(payment_method)
 
         return Transaction(
             date=date,

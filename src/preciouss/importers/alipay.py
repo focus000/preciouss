@@ -6,7 +6,6 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from preciouss.importers.base import CsvImporter, Transaction
-from preciouss.importers.resolve import resolve_payment_account
 
 
 class AlipayImporter(CsvImporter):
@@ -22,6 +21,7 @@ class AlipayImporter(CsvImporter):
 
     skip_lines = 3  # Alipay adds 3 metadata lines before the CSV header row
     expected_headers = ["支付宝交易记录"]
+    tab_delimited = True
 
     def __init__(self, account: str = "Assets:Alipay", currency: str = "CNY"):
         self._account = account
@@ -44,36 +44,6 @@ class AlipayImporter(CsvImporter):
             return "支付宝交易记录" in first_lines
         except Exception:
             return False
-
-    def extract(self, filepath) -> list[Transaction]:
-        """Override extract to handle Alipay's tab-comma delimiter."""
-        import csv
-        import io
-        from pathlib import Path
-
-        filepath = Path(filepath)
-        content = self._read_file(filepath)
-
-        # Skip metadata lines
-        lines = content.split("\n")
-        csv_lines = lines[self.skip_lines :]
-
-        # Alipay uses \t, as delimiter - strip tabs from each field
-        cleaned = []
-        for line in csv_lines:
-            # Replace \t, with just ,
-            cleaned.append(line.replace("\t,", ",").replace("\t", ""))
-        csv_content = "\n".join(cleaned)
-
-        reader = csv.DictReader(io.StringIO(csv_content))
-        transactions = []
-        for row in reader:
-            row = {k.strip(): v.strip() if v else "" for k, v in row.items() if k}
-            tx = self._parse_row(row)
-            if tx is not None:
-                transactions.append(tx)
-
-        return transactions
 
     def _parse_row(self, row: dict[str, str]) -> Transaction | None:
         """Parse a single Alipay CSV row."""
@@ -127,10 +97,7 @@ class AlipayImporter(CsvImporter):
             payment_method = row.get("交易来源地", "").strip()
 
         # Resolve payment account
-        if payment_method and payment_method not in ("", "/"):
-            resolved_account = resolve_payment_account(payment_method, f"{self._account}:Unknown")
-        else:
-            resolved_account = self._account
+        resolved_account = self._resolve_payment(payment_method)
 
         return Transaction(
             date=date,

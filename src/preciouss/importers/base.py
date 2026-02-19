@@ -70,6 +70,9 @@ class CsvImporter(PrecioussImporter):
     # CSV delimiter
     delimiter: str = ","
 
+    # Whether to strip tab characters (\t, and \t) before parsing
+    tab_delimited: bool = False
+
     def identify(self, filepath: str | Path) -> bool:
         """Identify by checking for expected header keywords."""
         filepath = Path(filepath)
@@ -92,7 +95,12 @@ class CsvImporter(PrecioussImporter):
 
         # Skip leading lines (some platforms add metadata before the header)
         lines = content.split("\n")
-        csv_content = "\n".join(lines[self.skip_lines :])
+        csv_lines = lines[self.skip_lines :]
+
+        if self.tab_delimited:
+            csv_lines = [line.replace("\t,", ",").replace("\t", "") for line in csv_lines]
+
+        csv_content = "\n".join(csv_lines)
 
         reader = csv.DictReader(io.StringIO(csv_content), delimiter=self.delimiter)
         transactions = []
@@ -109,6 +117,14 @@ class CsvImporter(PrecioussImporter):
     def _parse_row(self, row: dict[str, str]) -> Transaction | None:
         """Parse a single CSV row into a Transaction, or None to skip."""
         raise NotImplementedError
+
+    def _resolve_payment(self, payment_method: str) -> str:
+        """Resolve payment method string to a beancount account."""
+        if payment_method and payment_method not in ("", "/"):
+            from preciouss.importers.resolve import resolve_payment_account
+
+            return resolve_payment_account(payment_method, f"{self.account_name()}:Unknown")
+        return self.account_name()
 
     def _read_file(self, filepath: Path) -> str:
         """Read file with automatic encoding detection."""

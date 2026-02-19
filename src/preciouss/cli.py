@@ -192,6 +192,28 @@ def _importer_output_name(importer: PrecioussImporter) -> str:
     return "".join(result)
 
 
+def _find_matching_tx(
+    tx: Transaction,
+    pool: list[Transaction],
+    keywords: list[str],
+) -> int | None:
+    """Find index of a matching transaction in pool.
+
+    Match: exact amount + date within 1 day + keywords in payee/narration.
+    """
+    tx_amount = abs(tx.amount)
+    for i, candidate in enumerate(pool):
+        if abs(candidate.amount) != tx_amount:
+            continue
+        if abs((tx.date.date() - candidate.date.date()).days) > 1:
+            continue
+        text = f"{candidate.payee or ''} {candidate.narration or ''}"
+        if not any(kw in text for kw in keywords):
+            continue
+        return i
+    return None
+
+
 def _resolve_single_tx(
     tx: Transaction,
     target_platform: str,
@@ -209,26 +231,13 @@ def _resolve_single_tx(
         return False
 
     pool = all_txns_by_importer.get(target_imp_id, [])
-    tx_amount = abs(tx.amount)
 
-    for i, shadow in enumerate(pool):
-        # 1. Amount must match exactly
-        if abs(shadow.amount) != tx_amount:
-            continue
-        # 2. Date within 1 day
-        date_diff = abs((tx.date.date() - shadow.date.date()).days)
-        if date_diff > 1:
-            continue
-        # 3. Shadow tx must mention the source platform keywords
-        shadow_text = f"{shadow.payee or ''} {shadow.narration or ''}"
-        if not any(kw in shadow_text for kw in source_keywords):
-            continue
-
-        # Match found — inherit payment info
+    idx = _find_matching_tx(tx, pool, source_keywords)
+    if idx is not None:
+        shadow = pool[idx]
         tx.source_account = shadow.source_account
         tx.payment_method = shadow.payment_method
-        # Remove shadow tx from pool
-        pool.pop(i)
+        pool.pop(idx)
         return True
 
     return False
@@ -358,34 +367,19 @@ def _merge_aldi_with_payments(
     for aldi_id in aldi_imp_ids:
         aldi_txns = all_txns_by_importer.get(aldi_id, [])
         for aldi_tx in aldi_txns:
-            aldi_amount = abs(aldi_tx.amount)
             matched = False
 
             for pay_id in payment_imp_ids:
                 if matched:
                     break
                 pay_txns = all_txns_by_importer.get(pay_id, [])
-                for i, pay_tx in enumerate(pay_txns):
-                    # Match conditions:
-                    # 1. Amount exactly equal
-                    if abs(pay_tx.amount) != aldi_amount:
-                        continue
-                    # 2. Date within 1 day
-                    date_diff = abs((aldi_tx.date.date() - pay_tx.date.date()).days)
-                    if date_diff > 1:
-                        continue
-                    # 3. Merchant name contains ALDI/奥乐齐
-                    pay_text = f"{pay_tx.payee or ''} {pay_tx.narration or ''}"
-                    if "奥乐齐" not in pay_text and "ALDI" not in pay_text:
-                        continue
-
-                    # Match found! Inherit payment info
+                idx = _find_matching_tx(aldi_tx, pay_txns, ["奥乐齐", "ALDI"])
+                if idx is not None:
+                    pay_tx = pay_txns[idx]
                     aldi_tx.source_account = pay_tx.source_account
                     aldi_tx.payment_method = pay_tx.payment_method
-                    # Remove the matched payment tx
-                    pay_txns.pop(i)
+                    pay_txns.pop(idx)
                     matched = True
-                    break
 
 
 @main.command(name="import")

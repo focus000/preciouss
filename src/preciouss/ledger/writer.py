@@ -28,6 +28,13 @@ from preciouss.ledger.accounts import (
 )
 
 
+def _make_posting(
+    account: str, number: Decimal, currency: str, meta: dict | None = None
+) -> Posting:
+    """Create a Posting with standard None fields for cost/price/flag."""
+    return Posting(account, Amount(number, currency), None, None, None, meta)
+
+
 def transaction_to_bean(tx: Transaction, counter_account: str | None = None) -> BeanTransaction:
     """Convert an intermediate Transaction to a beancount Transaction.
 
@@ -59,28 +66,10 @@ def transaction_to_bean(tx: Transaction, counter_account: str | None = None) -> 
     postings = []
 
     # Source account posting (the account where money comes from/goes to)
-    postings.append(
-        Posting(
-            tx.source_account,
-            Amount(tx.amount, tx.currency),
-            None,
-            None,
-            None,
-            None,
-        )
-    )
+    postings.append(_make_posting(tx.source_account, tx.amount, tx.currency))
 
     # Counter account posting (expense/income category)
-    postings.append(
-        Posting(
-            counter_account,
-            Amount(-tx.amount, tx.currency),
-            None,
-            None,
-            None,
-            None,
-        )
-    )
+    postings.append(_make_posting(counter_account, -tx.amount, tx.currency))
 
     return BeanTransaction(
         meta=meta,
@@ -160,28 +149,15 @@ def multiposting_transaction_to_bean(
     if tx.metadata.get("aldi_channel"):
         meta["channel"] = tx.metadata["aldi_channel"]
 
-    postings = [
-        Posting(tx.source_account, Amount(tx.amount, tx.currency), None, None, None, None),
-    ]
+    postings = [_make_posting(tx.source_account, tx.amount, tx.currency)]
 
     if gift_card_amount > Decimal(0):
-        postings.append(
-            Posting(
-                "Assets:JD:GiftCard",
-                Amount(-gift_card_amount, tx.currency),
-                None,
-                None,
-                None,
-                None,
-            )
-        )
+        postings.append(_make_posting("Assets:JD:GiftCard", -gift_card_amount, tx.currency))
 
     for account, amount, its in category_amounts:
         posting_meta = new_metadata("<preciouss>", 0)
         posting_meta["items"] = ", ".join(_format_item(it) for it in its)
-        postings.append(
-            Posting(account, Amount(amount, tx.currency), None, None, None, posting_meta),
-        )
+        postings.append(_make_posting(account, amount, tx.currency, posting_meta))
 
     return BeanTransaction(
         meta=meta,
