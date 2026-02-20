@@ -14,7 +14,8 @@ from preciouss.config import Config, load_config
 from preciouss.importers.aldi import AldiImporter
 from preciouss.importers.alipay import AlipayImporter
 from preciouss.importers.base import PrecioussImporter, Transaction
-from preciouss.importers.cmb import CmbCreditImporter, CmbDebitImporter
+from preciouss.importers.citic import CiticCreditPdfImporter
+from preciouss.importers.cmb import CmbCreditImporter, CmbDebitImporter, CmbDebitPdfImporter
 from preciouss.importers.costco import CostcoImporter
 from preciouss.importers.jd import JdImporter, JdOrdersImporter
 from preciouss.importers.wechat import WechatImporter
@@ -32,6 +33,13 @@ def _get_importers(config: Config) -> list[PrecioussImporter]:
                 importers.append(
                     AlipayImporter(account=acct.beancount_account, currency=acct.currency)
                 )
+            case "citic":
+                importers.append(
+                    CiticCreditPdfImporter(
+                        account=acct.beancount_account or "Liabilities:CreditCard:CITIC",
+                        currency=acct.currency or "CNY",
+                    )
+                )
             case "cmb":
                 if acct.type == "credit_card":
                     importers.append(
@@ -39,6 +47,13 @@ def _get_importers(config: Config) -> list[PrecioussImporter]:
                             account=acct.beancount_account,
                             currency=acct.currency,
                             card_suffix=acct.identifier,
+                        )
+                    )
+                elif acct.type == "debit_pdf":
+                    importers.append(
+                        CmbDebitPdfImporter(
+                            account=acct.beancount_account or "Assets:Bank:CMB",
+                            currency=acct.currency or "CNY",
                         )
                     )
                 else:
@@ -80,6 +95,8 @@ def _get_importers(config: Config) -> list[PrecioussImporter]:
             WechatHKImporter(),
             CmbCreditImporter(),
             CmbDebitImporter(),
+            CmbDebitPdfImporter(),
+            CiticCreditPdfImporter(),
             AldiImporter(),
             CostcoImporter(),
             JdImporter(),
@@ -118,7 +135,7 @@ def init(ctx: click.Context, ledger_dir: str | None) -> None:
     click.echo("\nLedger initialized successfully.")
 
 
-_IMPORT_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json"}
+_IMPORT_EXTENSIONS = {".csv", ".xlsx", ".xls", ".json", ".pdf"}
 
 
 def _resolve_paths(paths: tuple[str, ...]) -> list[Path]:

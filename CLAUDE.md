@@ -75,7 +75,8 @@ uv run preciouss fava           # 启动 Fava
 - `importers/base.py` - Importer 基类（PrecioussImporter, CsvImporter）、中间 Transaction 模型、`match_clearing()` 默认匹配器
 - `importers/clearing.py` - 清算账户路由：商户识别（Costco/ALDI/JD）、支付方式解析 → `Assets:Clearing:*`
 - `importers/alipay.py` - 支付宝 CSV 导入
-- `importers/cmb.py` - 招商银行信用卡/储蓄卡 CSV 导入
+- `importers/citic.py` - 中信银行信用卡年度 PDF 账单导入（多账期，含 本期新增金额 周期校验）
+- `importers/cmb.py` - 招商银行信用卡/储蓄卡 CSV 导入 + 储蓄卡 PDF 流水导入（含 合并统计 端到端校验）
 - `importers/wechat.py` - 微信支付 CSV/XLSX 导入（含 header 金额校验、部分退款状态解析）
 - `importers/wechathk.py` - 微信支付香港 JSON 导入（跨币种 HKD→CNY 自动转换）
 - `importers/aldi.py` - ALDI 奥乐齐 JSON 导入（多 posting，商品明细写入 posting metadata）
@@ -84,7 +85,7 @@ uv run preciouss fava           # 启动 Fava
 - `importers/resolve.py` - 支付方式字符串 → Beancount 账户名解析（旧逻辑，CMB 仍使用）
 - `matching/clearing.py` - DFS 清算链匹配引擎：从终端支出向上追溯，分配 `^clr-NNNNNN` 链接标签
 - `categorize/rules.py` - 规则分类（关键词 + 正则，支持收支方向感知）
-- `ledger/writer.py` - Beancount .bean 文件写入（普通 / 多 posting / counter_account 桥接 / 跨币种 @ 价格注解 / links）
+- `ledger/writer.py` - Beancount .bean 文件写入（普通 / 多 posting / counter_account 桥接 / 跨币种 @ 价格注解 / links）；`Assets:Bank:*` 账户自动声明多币种（全币种账户支持）
 - `ledger/accounts.py` - 账户体系和默认账户
 - `cli.py` - Click CLI 入口
 
@@ -115,6 +116,7 @@ uv run preciouss fava           # 启动 Fava
 
 ## 测试约定
 
-- fixtures 目录: `tests/fixtures/` 存放样本 CSV/JSON/XLSX
+- fixtures 目录: `tests/fixtures/` 存放样本 CSV/JSON/XLSX/PDF
 - 每个 importer 至少一个测试用例
 - 测试文件命名: `test_<module>.py`
+- PDF importer 测试用 `unittest.mock.patch("pdfplumber.open", ...)` mock，无需真实 PDF fixture

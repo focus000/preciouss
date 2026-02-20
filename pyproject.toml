@@ -19,6 +19,7 @@ dependencies = [
     "pandas>=2.0",
     "requests>=2.28",
     "openpyxl>=3.1.5",
+    "pdfplumber>=0.11.9",
 ]
 
 [project.scripts]

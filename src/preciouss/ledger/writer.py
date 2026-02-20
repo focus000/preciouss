@@ -371,6 +371,9 @@ include "importers/*.bean"
             elif account.startswith("Assets:Clearing:"):
                 # Clearing accounts may bridge different currencies
                 currencies = ",".join(DEFAULT_CURRENCIES)
+            elif account.startswith("Assets:Bank:"):
+                # Bank accounts may hold foreign currencies (e.g. CMB 全币种 account)
+                currencies = ",".join(DEFAULT_CURRENCIES)
             elif "HK" in account:
                 currencies = "HKD"
             elif "PayPal" in account or "IBKR" in account:
