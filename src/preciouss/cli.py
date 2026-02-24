@@ -399,6 +399,20 @@ def import_cmd(
                 f"{clr_stats.unmatched_terminal} unmatched"
             )
 
+    # Phase 2.75: Apply overrides from overrides.toml
+    from preciouss.categorize.apply import apply_overrides as _apply_overrides
+    from preciouss.categorize.overrides import get_overrides_path, load_overrides
+
+    total_overridden = 0
+    overrides_path = get_overrides_path(str(ledger_dir))
+    if overrides_path.exists():
+        overrides = load_overrides(overrides_path)
+        if overrides:
+            for imp_id_ov, txns_ov in all_txns_by_importer.items():
+                total_overridden += _apply_overrides(txns_ov, overrides)
+            if total_overridden:
+                click.echo(f"\nOverrides applied: {total_overridden}")
+
     # Phase 3: Write per importer (each importer is independent, no cross-source mutations)
     for imp_id, all_txns in all_txns_by_importer.items():
         importer = importer_map[imp_id]
@@ -437,33 +451,188 @@ def import_cmd(
         _validate_ledger(ledger_dir, config.general.main_file)
 
 
-@main.command()
-@click.option("--dry-run", is_flag=True, help="Show matches without modifying files")
+@main.command(name="filter")
+@click.argument("where", required=False, default=None)
+@click.option("--txid", "-t", is_flag=True, help="Output only transaction ref IDs (one per line)")
 @click.pass_context
-def match(ctx: click.Context, dry_run: bool) -> None:
-    """DFS match clearing account chains, propagate ^link."""
+def filter_cmd(ctx: click.Context, where: str | None, txid: bool) -> None:
+    """Query transactions using BQL WHERE clause.
+
+    Examples:
+
+    \b
+      preciouss filter                            # all uncategorized
+      preciouss filter "narration ~ '美团'"        # custom filter
+      preciouss filter -t "narration ~ '美团'"     # txid only (for piping)
+    """
+    from preciouss.categorize.bql import connect, query_transactions, read_bean_entry
+
     config: Config = ctx.obj["config"]
-
-    # Load all imported transactions
     ledger_dir = Path(config.general.ledger_dir)
-    import_dir = ledger_dir / "importers"
+    main_bean = ledger_dir / config.general.main_file
 
-    if not import_dir.exists():
-        click.echo("No imported files found. Run 'preciouss import' first.", err=True)
+    if not main_bean.exists():
+        click.echo("Ledger not found. Run 'preciouss init' and 'preciouss import' first.", err=True)
         sys.exit(1)
 
-    click.echo("Clearing account matching engine")
-    click.echo("This feature will be fully implemented in Phase 7.")
-    if dry_run:
-        click.echo("(dry-run mode)")
+    conn = connect(str(ledger_dir), config.general.main_file)
+    matches = query_transactions(conn, where)
+
+    if not matches:
+        click.echo("No matching transactions found.", err=True)
+        sys.exit(0)
+
+    if txid:
+        for m in matches:
+            click.echo(m.ref)
+    else:
+        click.echo(f"Found {len(matches)} transaction(s):\n")
+        for m in matches:
+            entry_text = read_bean_entry(m.filename, m.lineno)
+            if entry_text:
+                click.echo(entry_text)
+                click.echo()
 
 
 @main.command()
+@click.argument("txids", nargs=-1)
+@click.option("--interactive", "-i", is_flag=True, help="Open $EDITOR to edit overrides.toml")
+@click.option("--info", is_flag=True, help="Show override entries vs current bean state")
+@click.option(
+    "--kv", multiple=True, help="Pre-fill key=value (e.g. --kv category=Expenses:Food:Restaurant)"
+)
 @click.pass_context
-def categorize(ctx: click.Context) -> None:
-    """Run the categorization engine on uncategorized transactions."""
-    click.echo("Categorization engine: rules-based + ML prediction")
-    click.echo("This feature will be fully implemented in Phase 3.")
+def override(
+    ctx: click.Context,
+    txids: tuple[str, ...],
+    interactive: bool,
+    info: bool,
+    kv: tuple[str, ...],
+) -> None:
+    """Manage transaction overrides in overrides.toml.
+
+    Examples:
+
+    \b
+      preciouss override REF1 REF2                    # add entries to overrides.toml
+      preciouss override REF1 --kv category=Expenses:Food  # add with pre-filled category
+      preciouss filter -t "..." | preciouss override   # pipe txids from filter
+      preciouss override --info                        # show override status
+      preciouss override -i                            # edit in $EDITOR
+    """
+    from preciouss.categorize.bql import MatchedTransaction, connect, find_by_refs
+    from preciouss.categorize.overrides import (
+        add_entries,
+        get_overrides_path,
+        load_overrides,
+        open_editor,
+    )
+
+    config: Config = ctx.obj["config"]
+    ledger_dir = Path(config.general.ledger_dir)
+    overrides_path = get_overrides_path(str(ledger_dir))
+
+    # Parse --kv options
+    defaults: dict[str, str] = {}
+    for item in kv:
+        if "=" not in item:
+            click.echo(f"Invalid --kv format: '{item}' (expected key=value)", err=True)
+            sys.exit(1)
+        key, value = item.split("=", 1)
+        defaults[key] = value
+
+    # --info mode: show overrides status
+    if info:
+        entries = load_overrides(overrides_path)
+        if not entries:
+            click.echo("overrides.toml: empty (no overrides configured)")
+            return
+
+        click.echo(f"overrides.toml: {len(entries)} entries\n")
+
+        # Try to connect to ledger for current state
+        main_bean = ledger_dir / config.general.main_file
+        conn = None
+        match_map: dict[str, MatchedTransaction] = {}
+        if main_bean.exists():
+            conn = connect(str(ledger_dir), config.general.main_file)
+            refs = list(entries.keys())
+            matches = find_by_refs(conn, refs)
+            match_map = {m.ref: m for m in matches}
+
+        for ref, entry in entries.items():
+            match = match_map.get(ref)
+            if match is None:
+                click.echo(f"[{ref}] — no matching transaction in ledger")
+            else:
+                click.echo(
+                    f"[{ref}] {match.date} "
+                    f'"{match.payee}" "{match.narration}" '
+                    f"{match.amount} {match.currency}"
+                )
+                # Show each field
+                for field in ("category", "payee", "narration"):
+                    override_val = getattr(entry, field, "")
+                    if field == "category":
+                        current = match.current_account
+                    else:
+                        current = getattr(match, field, "")
+                    if override_val:
+                        click.echo(f"  {field}: {current} → {override_val}")
+                    else:
+                        click.echo(f"  {field}: (no override)")
+            click.echo()
+        return
+
+    # -i mode: open editor
+    if interactive:
+        if not overrides_path.exists():
+            click.echo(
+                "overrides.toml does not exist. "
+                "Add entries first with 'preciouss override REF...'",
+                err=True,
+            )
+            sys.exit(1)
+        open_editor(overrides_path)
+        click.echo(f"Saved: {overrides_path}")
+        return
+
+    # Default mode: add txids to overrides.toml
+    # Collect txids from args or stdin
+    ref_list = list(txids)
+    if not ref_list and not sys.stdin.isatty():
+        ref_list = [line.strip() for line in sys.stdin if line.strip()]
+
+    if not ref_list:
+        click.echo("No txids provided. Usage: preciouss override REF1 REF2 ...", err=True)
+        click.echo("Or pipe from filter: preciouss filter -t '...' | preciouss override", err=True)
+        sys.exit(1)
+
+    # Connect to ledger to get transaction details
+    main_bean = ledger_dir / config.general.main_file
+    if not main_bean.exists():
+        click.echo("Ledger not found. Run 'preciouss init' and 'preciouss import' first.", err=True)
+        sys.exit(1)
+
+    conn = connect(str(ledger_dir), config.general.main_file)
+    matches = find_by_refs(conn, ref_list)
+    match_map = {m.ref: m for m in matches}
+
+    # Warn about unmatched refs
+    matched_refs = set(match_map.keys())
+    for ref in ref_list:
+        if ref not in matched_refs:
+            click.echo(f"  Warning: '{ref}' not found in ledger", err=True)
+
+    if not matches:
+        click.echo("No matching transactions found.", err=True)
+        sys.exit(1)
+
+    added = add_entries(overrides_path, ref_list, match_map, defaults if defaults else None)
+    click.echo(f"overrides.toml: {added} added, {len(ref_list) - added} updated")
+    click.echo(f"  File: {overrides_path}")
+    click.echo("  Edit: preciouss override -i")
+    click.echo("  Apply: preciouss import --reinit <files>")
 
 
 @main.command()

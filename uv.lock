@@ -1076,6 +1076,7 @@ source = { editable = "." }
 dependencies = [
     { name = "beancount" },
     { name = "beangulp" },
+    { name = "beanquery" },
     { name = "chardet" },
     { name = "click" },
     { name = "fava" },
@@ -1100,6 +1101,7 @@ dev = [
 requires-dist = [
     { name = "beancount", specifier = ">=3.0" },
     { name = "beangulp", specifier = ">=0.1" },
+    { name = "beanquery", specifier = ">=0.2.0" },
     { name = "chardet", specifier = ">=5.0" },
     { name = "click", specifier = ">=8.0" },
     { name = "fava", specifier = ">=1.28" },
