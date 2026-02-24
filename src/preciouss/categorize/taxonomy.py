@@ -43,6 +43,11 @@ EXPENSE_TAXONOMY: dict[str, dict[str, str]] = {
         "Courses": "课程",
         "Training": "培训",
     },
+    "Expenses:Pet": {
+        "Food": "宠物食品",
+        "Supplies": "宠物用品",
+        "Medical": "宠物医疗",
+    },
     "Expenses:Finance": {
         "Fees": "手续费",
         "Interest": "利息支出",

@@ -26,6 +26,8 @@ DEFAULT_RULES: dict[str, str] = {
     "医疗保健": "Expenses:Health:Medical",
     "生活服务": "Expenses:Shopping:DailyGoods",
     "12306": "Expenses:Transport:PublicTransit",
+    "中国铁路网络": "Expenses:Transport:PublicTransit",
+    "铁路": "Expenses:Transport:PublicTransit",
     # Huawei campus specific (MUST be before any generic "华为" rule)
     "华为一卡通": "Expenses:Food:Restaurant",
     "捷华餐饮": "Expenses:Food:Restaurant",
@@ -73,9 +75,11 @@ DEFAULT_RULES: dict[str, str] = {
     "小遛共享": "Expenses:Transport:PublicTransit",
     # Transport - moving/freight
     "货拉拉": "Expenses:Transport:Taxi",
-    # Food - delivery
+    # Food - delivery (including corporate legal names)
     "美团外卖": "Expenses:Food:Delivery",
     "饿了么": "Expenses:Food:Delivery",
+    "拉扎斯": "Expenses:Food:Delivery",
+    "三快在线": "Expenses:Food:Delivery",
     # Food - fast food
     "麦当劳": "Expenses:Food:Restaurant",
     "金拱门": "Expenses:Food:Restaurant",
@@ -85,6 +89,10 @@ DEFAULT_RULES: dict[str, str] = {
     "棒约翰": "Expenses:Food:Restaurant",
     "pizzahut": "Expenses:Food:Restaurant",
     "必胜客": "Expenses:Food:Restaurant",
+    "百胜咨询": "Expenses:Food:Restaurant",
+    "赛百味": "Expenses:Food:Restaurant",
+    "subway": "Expenses:Food:Restaurant",
+    "黄记煌": "Expenses:Food:Restaurant",
     "老乡鸡": "Expenses:Food:Restaurant",
     "嘉旺": "Expenses:Food:Restaurant",
     # Food - restaurants (from real data)
@@ -93,7 +101,11 @@ DEFAULT_RULES: dict[str, str] = {
     "酒家": "Expenses:Food:Restaurant",
     "饭店": "Expenses:Food:Restaurant",
     "面馆": "Expenses:Food:Restaurant",
+    "面片": "Expenses:Food:Restaurant",
     "烤肉": "Expenses:Food:Restaurant",
+    "烧肉": "Expenses:Food:Restaurant",
+    "居酒屋": "Expenses:Food:Restaurant",
+    "日料": "Expenses:Food:Restaurant",
     "火锅": "Expenses:Food:Restaurant",
     "海底捞": "Expenses:Food:Restaurant",
     "串串": "Expenses:Food:Restaurant",
@@ -115,7 +127,11 @@ DEFAULT_RULES: dict[str, str] = {
     "1点点": "Expenses:Food:Restaurant",
     "书亦": "Expenses:Food:Restaurant",
     "甜品": "Expenses:Food:Restaurant",
+    "蛋糕": "Expenses:Food:Restaurant",
     "烘焙": "Expenses:Food:Restaurant",
+    "牛排": "Expenses:Food:Restaurant",
+    "粉汤": "Expenses:Food:Restaurant",
+    "羊血": "Expenses:Food:Restaurant",
     # Food - grocery/supermarket
     "华润万家": "Expenses:Food:Grocery",
     "沃尔玛": "Expenses:Food:Grocery",
@@ -137,6 +153,7 @@ DEFAULT_RULES: dict[str, str] = {
     "苏果超市": "Expenses:Food:Grocery",
     "大润发": "Expenses:Food:Grocery",
     "卜蜂莲花": "Expenses:Food:Grocery",
+    "鲜惠都": "Expenses:Food:Grocery",
     "宜家": "Expenses:Shopping:HomeGoods",
     # Shopping - clothing
     "优衣库": "Expenses:Shopping:Clothing",
@@ -155,6 +172,9 @@ DEFAULT_RULES: dict[str, str] = {
     "京东": "Expenses:Shopping:DailyGoods",
     "淘宝": "Expenses:Shopping:DailyGoods",
     "拼多多": "Expenses:Shopping:DailyGoods",
+    "有品信息": "Expenses:Shopping:DailyGoods",
+    "购物广场": "Expenses:Shopping:DailyGoods",
+    "百货": "Expenses:Shopping:DailyGoods",
     # Entertainment
     "万达电影": "Expenses:Entertainment:Movie",
     "电影": "Expenses:Entertainment:Movie",
@@ -170,6 +190,8 @@ DEFAULT_RULES: dict[str, str] = {
     "同程": "Expenses:Entertainment:Travel",
     "希尔顿": "Expenses:Entertainment:Travel",
     "酒店": "Expenses:Entertainment:Travel",
+    "慧通差旅": "Expenses:Entertainment:Travel",
+    "慧通商务": "Expenses:Entertainment:Travel",
     "知乎": "Expenses:Entertainment:Subscription",
     "极客时间": "Expenses:Entertainment:Subscription",
     "bilibili": "Expenses:Entertainment:Subscription",
@@ -178,6 +200,8 @@ DEFAULT_RULES: dict[str, str] = {
     "netflix": "Expenses:Entertainment:Subscription",
     "leetcode": "Expenses:Entertainment:Subscription",
     "力扣": "Expenses:Entertainment:Subscription",
+    "咪咕": "Expenses:Entertainment:Subscription",
+    "充值服务": "Expenses:Entertainment:Subscription",
     # Housing
     "物业": "Expenses:Housing:PropertyFee",
     "万科物业": "Expenses:Housing:PropertyFee",
@@ -187,13 +211,14 @@ DEFAULT_RULES: dict[str, str] = {
     "燃气": "Expenses:Housing:Utilities",
     "生活缴费": "Expenses:Housing:Utilities",
     # Health
+    "体检": "Expenses:Health:Medical",
     "门诊部": "Expenses:Health:Medical",
     "门诊": "Expenses:Health:Medical",
     "诊中支付": "Expenses:Health:Medical",
     "医院": "Expenses:Health:Medical",
     "药房": "Expenses:Health:Medicine",
     "药店": "Expenses:Health:Medicine",
-    "宠物医院": "Expenses:Health:Medical",
+    "宠物医院": "Expenses:Pet:Medical",
     "游泳池": "Expenses:Health:Fitness",
     "游泳": "Expenses:Health:Fitness",
     "健身房": "Expenses:Health:Fitness",
@@ -203,6 +228,7 @@ DEFAULT_RULES: dict[str, str] = {
     "书店": "Expenses:Education:Books",
     "图书": "Expenses:Education:Books",
     "三联生活": "Expenses:Education:Books",
+    "当当": "Expenses:Education:Books",
     "课程": "Expenses:Education:Courses",
     "培训": "Expenses:Education:Training",
     "兰州大学": "Expenses:Education:Courses",
@@ -214,6 +240,11 @@ DEFAULT_RULES: dict[str, str] = {
     "顺丰": "Expenses:Shopping:DailyGoods",
     "丰巢": "Expenses:Shopping:DailyGoods",
     "中国邮政": "Expenses:Shopping:DailyGoods",
+    "搬家": "Expenses:Shopping:DailyGoods",
+    "鲜花": "Expenses:Shopping:DailyGoods",
+    "花加": "Expenses:Shopping:DailyGoods",
+    "名烟名酒": "Expenses:Shopping:DailyGoods",
+    "照相馆": "Expenses:Shopping:DailyGoods",
     # Telecom
     "联通": "Expenses:Housing:Utilities",
     "电信": "Expenses:Housing:Utilities",
@@ -231,6 +262,15 @@ DEFAULT_RULES: dict[str, str] = {
     # Government
     "出入境": "Expenses:Finance:Fees",
     "身份证": "Expenses:Finance:Fees",
+    # Pet
+    "猫砂": "Expenses:Pet:Supplies",
+    "猫粮": "Expenses:Pet:Food",
+    "猫食": "Expenses:Pet:Food",
+    "猫厕所": "Expenses:Pet:Supplies",
+    "猫牵引": "Expenses:Pet:Supplies",
+    "溜猫": "Expenses:Pet:Supplies",
+    "上海宠贝": "Expenses:Pet:Food",
+    "宠物": "Expenses:Pet:Supplies",
 }
 
 # Regex rules for more complex patterns
@@ -241,7 +281,8 @@ DEFAULT_REGEX_RULES: list[tuple[str, str]] = [
     (r"退款|退货", "Income:Refund"),
     (r"利息.*收入", "Income:Interest"),
     (r"红包", "Income:Uncategorized"),
-    (r"信用卡还款", "Expenses:Finance:Fees"),
+    (r"信用卡.*还款|还款.*信用卡|信用卡存款", "Expenses:Transfer"),
+    (r"ATM.*取款|银联ATM", "Expenses:Transfer"),
     (r"转账|群收款", "Expenses:Transfer"),
 ]
 

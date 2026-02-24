@@ -84,8 +84,9 @@ uv run preciouss fava           # 启动 Fava
 - `importers/jd.py` - 京东 CSV 导入（纯桥接模式：JdImporter → 清算；JdOrdersImporter → 带明细的多 posting）
 - `importers/resolve.py` - 支付方式字符串 → Beancount 账户名解析（旧逻辑，CMB 仍使用）
 - `matching/clearing.py` - DFS 清算链匹配引擎：从终端支出向上追溯，分配 `^clr-NNNNNN` 链接标签
-- `categorize/rules.py` - 规则分类（关键词 + 正则，支持收支方向感知）
+- `categorize/rules.py` - 规则分类（关键词 + 正则，支持收支方向感知、企业法律名称→品牌映射）
 - `ledger/writer.py` - Beancount .bean 文件写入（普通 / 多 posting / counter_account 桥接 / 跨币种 @ 价格注解 / links）；`Assets:Bank:*` 账户自动声明多币种（全币种账户支持）
+- `categorize/taxonomy.py` - 支出分类体系定义（Food, Transport, Shopping, Pet 等）
 - `ledger/accounts.py` - 账户体系和默认账户
 - `cli.py` - Click CLI 入口
 
