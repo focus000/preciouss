@@ -171,6 +171,25 @@ uv run ruff check src/
 uv run mypy src/preciouss/
 ```
 
+## GitHub Actions: Review -> 自动修复 PR
+
+已提供工作流文件：`.github/workflows/codex-pr-review-autofix.yml`。
+
+行为约束：
+- 先 Review，再 Auto-fix（两阶段）
+- 仅处理 `P0/P1`
+- 不做重构
+- 必须补测试
+- 必须执行并通过 `uv run pytest tests/ -v`
+
+启用前请在仓库设置中添加 Secret：
+- `OPENAI_API_KEY`
+
+触发条件：
+- `pull_request`（opened / synchronize / reopened / ready_for_review）
+- 仅对同仓库 PR（非 fork）执行
+- PR 是 `draft` 时不执行
+
 ## License
 
 MIT

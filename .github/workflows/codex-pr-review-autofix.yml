@@ -1,0 +1,200 @@
+name: Codex PR Review -> Auto-fix (P0/P1)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: codex-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      ${{
+        !github.event.pull_request.draft &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        secrets.OPENAI_API_KEY != ''
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      p01_count: ${{ steps.gate.outputs.p01_count }}
+      should_autofix: ${{ steps.gate.outputs.should_autofix }}
+    steps:
+      - name: Checkout PR merge commit
+        uses: actions/checkout@v5
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          fetch-depth: 0
+
+      - name: Prepare git refs
+        run: |
+          git fetch --no-tags origin "${{ github.event.pull_request.base.ref }}"
+          git fetch --no-tags origin +refs/pull/${{ github.event.pull_request.number }}/head
+
+      - name: Codex review (structured JSON)
+        id: codex_review
+        uses: openai/codex-action@v1
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .github/codex/prompts/review-p0p1.md
+          output-schema-file: .github/codex/schemas/review-findings.schema.json
+          output-file: codex-review.json
+          safety-strategy: drop-sudo
+          sandbox: read-only
+
+      - name: Evaluate P0/P1 gate
+        id: gate
+        run: |
+          p01_count="$(jq '[.findings[]? | select(.severity == "P0" or .severity == "P1")] | length' codex-review.json)"
+          echo "p01_count=${p01_count}" >> "$GITHUB_OUTPUT"
+          if [ "${p01_count}" -gt 0 ]; then
+            echo "should_autofix=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_autofix=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-review-${{ github.event.pull_request.number }}
+          path: codex-review.json
+
+      - name: Comment review summary
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          P01_COUNT: ${{ steps.gate.outputs.p01_count }}
+          SHOULD_AUTOFIX: ${{ steps.gate.outputs.should_autofix }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require("fs");
+            let reviewJson = "{}";
+            try {
+              reviewJson = fs.readFileSync("codex-review.json", "utf8");
+            } catch {}
+
+            const body = [
+              "## Codex Review Gate",
+              `- P0/P1 findings: ${process.env.P01_COUNT ?? "0"}`,
+              `- Auto-fix next step: ${process.env.SHOULD_AUTOFIX === "true" ? "run" : "skip"}`,
+              "",
+              "<details><summary>Structured review output</summary>",
+              "",
+              "```json",
+              reviewJson,
+              "```",
+              "</details>",
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+  autofix:
+    needs: review
+    if: needs.review.outputs.should_autofix == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout PR head branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Download review artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: codex-review-${{ github.event.pull_request.number }}
+          path: .github/codex/review
+
+      - name: Codex auto-fix (P0/P1 only)
+        id: codex_fix
+        uses: openai/codex-action@v1
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .github/codex/prompts/autofix-p0p1.md
+          codex-args: --full-auto
+          output-file: codex-autofix.md
+          safety-strategy: drop-sudo
+          sandbox: workspace-write
+
+      - name: Run tests (required)
+        run: uv run pytest tests/ -v
+
+      - name: Commit and push fixes
+        id: commit
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "changes_pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "codex[bot]"
+          git config user.email "codex[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: address P0/P1 findings with tests"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          echo "changes_pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Comment auto-fix result
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          CHANGES_PUSHED: ${{ steps.commit.outputs.changes_pushed }}
+          JOB_STATUS: ${{ job.status }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require("fs");
+            let fixSummary = "";
+            try {
+              fixSummary = fs.readFileSync("codex-autofix.md", "utf8").trim();
+            } catch {}
+
+            const body = [
+              "## Codex Auto-fix",
+              `- Job status: ${process.env.JOB_STATUS}`,
+              `- Changes pushed: ${process.env.CHANGES_PUSHED === "true" ? "yes" : "no"}`,
+              "- Test gate: `uv run pytest tests/ -v`",
+              "",
+              fixSummary ? `<details><summary>Codex fix summary</summary>\n\n${fixSummary}\n\n</details>` : "",
+            ]
+              .filter(Boolean)
+              .join("\n");
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
