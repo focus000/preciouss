@@ -13,8 +13,7 @@ jobs:
     if: >-
       ${{
         !github.event.pull_request.draft &&
-        github.event.pull_request.head.repo.full_name == github.repository &&
-        secrets.OPENAI_API_KEY != ''
+        github.event.pull_request.head.repo.full_name == github.repository
       }}
     runs-on: ubuntu-latest
     permissions:
@@ -29,6 +28,15 @@ jobs:
         with:
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
           fetch-depth: 0
+
+      - name: Validate OPENAI_API_KEY
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "${OPENAI_API_KEY}" ]; then
+            echo "Missing OPENAI_API_KEY secret. Configure it in repo settings." >&2
+            exit 1
+          fi
 
       - name: Prepare git refs
         run: |
